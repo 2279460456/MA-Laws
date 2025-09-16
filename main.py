@@ -12,7 +12,7 @@ MODEL_CONFIG = {
     "config_list": config_list,
     "cache_seed": None,
     "temperature": 1,
-    "timeout": 300,
+    "timeout": 301,
 }
 
 def run_simulation(case_data: dict):
