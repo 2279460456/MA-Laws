@@ -1,0 +1,50 @@
+[
+    {
+        "model": "Qwen/Qwen3-8B",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "api_key": "sk-wqhhsltkxgtkutuelgtocfzarqaaectyywghxnpittjbmvfe",
+        "tags": [
+            "Qwen"
+        ]
+    },
+    {
+        "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "api_key": "sk-wqhhsltkxgtkutuelgtocfzarqaaectyywghxnpittjbmvfe",
+        "tags": [
+            "deepseek_7B"
+        ]
+    },
+    {
+        "model": "THUDM/GLM-Z1-9B-0414",
+        "base_url": "https://api.siliconflow.cn/v1",
+        "api_key": "sk-wqhhsltkxgtkutuelgtocfzarqaaectyywghxnpittjbmvfe",
+        "tags": [
+            "THUDM_9B"
+        ]
+    },
+    {
+        "model": "NotRequired",
+        "api_key": "NotRequired",
+        "base_url": "http://0.0.0.0:4000",
+        "tags": [
+            "llama"
+        ]
+    },
+    {
+        "model": "deepseek-reasoner",
+        "base_url": "https://api.deepseek.com",
+        "api_key": "sk-a86440fe2508455c863130b3c0c78c0a",
+        "tags": [
+            "deepseek_reasoner"
+        ]
+    },
+    {
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com",
+        "api_key": "sk-a86440fe2508455c863130b3c0c78c0a",
+        "tags": [
+            "deepseek_chat"
+        ]
+    }
+]
