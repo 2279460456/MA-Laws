@@ -4,6 +4,7 @@ from autogen import (UserProxyAgent, AssistantAgent, GroupChat, GroupChatManager
 import time
 import json
 import os
+import re
 
 # === 全局配置 ===
 N_ROUNDS = 10
@@ -15,7 +16,53 @@ MODEL_CONFIG = {
     "timeout": 300,
 }
 
-def run_simulation(case_data: dict):
+def extract_law_articles_from_text(text: str):
+    try:
+        # 尝试从文本中提取第一个JSON对象
+        match = re.search(r"\{[\s\S]*?\}", text)
+        if not match:
+            return []
+        data = json.loads(match.group(0))
+        arts = data.get("Law Articles", [])
+        # 归一化为整数列表
+        normalized = []
+        for a in arts:
+            try:
+                normalized.append(int(a))
+            except Exception:
+                # 尝试从字符串中提取数字
+                m = re.search(r"\d+", str(a))
+                if m:
+                    normalized.append(int(m.group(0)))
+        return normalized
+    except Exception:
+        return []
+
+
+def extract_law_articles_from_messages(messages):
+    # 从审判长最新消息中解析结构化结果
+    for msg in reversed(messages):
+        if msg.get("name") == "PresidingJudge":
+            content = msg.get("content", "")
+            arts = extract_law_articles_from_text(content)
+            if arts:
+                return arts
+    return []
+
+
+def compute_prf1(pred_list, true_list):
+    pred_set = set(pred_list)
+    true_set = set(true_list)
+    tp = len(pred_set & true_set)
+    pred_n = len(pred_set)
+    true_n = len(true_set)
+    precision = tp / pred_n if pred_n > 0 else (1.0 if true_n == 0 else 0.0)
+    recall = tp / true_n if true_n > 0 else 1.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    return precision, recall, f1
+
+
+def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     """
     运行一个完整的法庭模拟案例。
     param case_data: 包含案件所有信息的字典，应包含 'index', 'CaseId', 'case_description, "defendant_evidence","plaintiff_evidence"'
@@ -41,7 +88,7 @@ def run_simulation(case_data: dict):
             self.manager = manager
             # print(dir(self.manager))
         def __call__(self, msg):
-            print(f'赵智自行打印的msg：\n{isinstance(msg,dict)}\n{msg}')
+            # print(f'赵智自行打印的msg：\n{isinstance(msg,dict)}\n{msg}')
 
             name = msg.get("name")
             if name == "PlaintiffTeamDelegate":
@@ -97,13 +144,14 @@ def run_simulation(case_data: dict):
             "庭审结束，现将宣告最终庭审结果："
             "【案件事实】：……"
             "【证据与理由】：……"
-            "【最终判决如下】：明确写明罪名、量刑、罚金金额（如有）、附加刑（如有）、以及适用的法律条款。"
-            "同时，你还需要输出结构化结果，格式如下："
+            "【最终判决如下】：应当明确写明罪名、量刑、罚金金额（如有）、附加刑（如有），并仅列出适用的《刑法》条款。"
+            
+            "同时，你还需要输出结构化结果，格式如下(注意：Law Articles 中必须是纯数字)："
             "{"
             "\"Sentence\": [\"……\"],"
             "\"Fine\": [\"……\"],"
             "\"Crime Type\": [\"……\"],"
-            "\"Law Articles\": [123, 456]"
+            "\"Law Articles\": [\"……\", \"……\"]"
             "}"
         )
     )
@@ -449,23 +497,42 @@ def run_simulation(case_data: dict):
                 new_msg['interconversation'] = all_defendant_internal_debates[defendant_debate_index]
                 defendant_debate_index += 1
         final_conversation_history.append(new_msg)
-
-    output_dir = "ljp_output/9.16"
+        
     #不存在就创建文件夹
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
-    conversation_path = os.path.join(output_dir, f"{case_index}_conversation.json")
+    conversation_path = os.path.join(out_dir, f"{case_index}_conversation.json")
     with open(conversation_path, "w", encoding="utf-8") as f:
         json.dump(final_conversation_history, f, indent=4, ensure_ascii=False)
 
     print(f"\n对话记录已保存到：{conversation_path}")
+
+    # === 计算本案例Law Articles指标 ===
+    pred_articles = extract_law_articles_from_messages(manager.groupchat.messages)
+    true_articles = truth_map.get(CaseId, [])
+    p, r, f1 = compute_prf1(pred_articles, true_articles)
+    print(f"案例 {case_index} ({CaseId}) Law Articles → 预测: {sorted(set(pred_articles))} | 真值: {sorted(set(true_articles))}")
+    print(f"Precision: {p:.4f}  Recall: {r:.4f}  F1: {f1:.4f}")
+
     print(f"\n===== 案例 {case_index}: {CaseId} 模拟结束 =====\n")
+
+    return {
+        "index": case_index,
+        "CaseId": CaseId,
+        "pred_law_articles": sorted(list(set(pred_articles))),
+        "true_law_articles": sorted(list(set(true_articles))),
+        "precision": p,
+        "recall": r,
+        "f1": f1,
+        "conversation_path": conversation_path,
+    }
 
 
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
     inputDir = 'dataset/ours/processed_cases.json'
+    out_dir = "ljp_output/9.17"
     try:
         with open(inputDir, "r", encoding="utf-8") as f:
             simulation_cases = json.load(f)
@@ -476,10 +543,72 @@ if __name__ == "__main__":
         print("错误：'cases.json' 文件格式不正确，无法解析。")
         exit()
 
+    # 加载真值Law Articles
+    truth_file = 'dataset/Judge/all.json'
+    try:
+        with open(truth_file, 'r', encoding='utf-8') as f:
+            judge_items = json.load(f)
+    except Exception as e:
+        print(f"错误：无法加载真值文件 {truth_file} ：{e}")
+        exit()
 
-    # 依次运行所有模拟案例
-    for case in simulation_cases:
+    truth_map = {}
+    for item in judge_items:
+        cid = item.get('CaseId')
+        arts = item.get('Law Articles', [])
+        normalized = []
+        for a in arts:
+            try:
+                normalized.append(int(a))
+            except Exception:
+                m = re.search(r"\d+", str(a))
+                if m:
+                    normalized.append(int(m.group(0)))
+        if cid:
+            truth_map[cid] = normalized
+
+    # 依次运行所有模拟案例并统计指标
+    results = []
+    sum_p = 0.0
+    sum_r = 0.0
+    sum_f1 = 0.0
+    case_cnt = 0
+
+    for case in simulation_cases[5:10]:
         if "index" not in case:
             print(f"警告：案件 '{case.get('CaseId', '未命名')}' 缺少 'index' 字段，将跳过此案件。")
             continue
-        run_simulation(case)
+        res = run_simulation(case, truth_map,out_dir)
+        results.append(res)
+        sum_p += res["precision"]
+        sum_r += res["recall"]
+        sum_f1 += res["f1"]
+        case_cnt += 1
+
+    if case_cnt > 0:
+        avg_p = sum_p / case_cnt
+        avg_r = sum_r / case_cnt
+        avg_f1 = sum_f1 / case_cnt
+        print(f"\n=== 所有案例平均指标（Law Articles） ===")
+        print(f"平均 Precision: {avg_p:.4f}")
+        print(f"平均 Recall:    {avg_r:.4f}")
+        print(f"平均 F1:        {avg_f1:.4f}")
+
+        # 保存指标到文件
+        metrics_output = {
+            "per_case": results,
+            "average": {
+                "precision": avg_p,
+                "recall": avg_r,
+                "f1": avg_f1,
+                "cases": case_cnt,
+            },
+        }
+        
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        with open(os.path.join(out_dir, "metrics.json"), "w", encoding="utf-8") as f:
+            json.dump(metrics_output, f, ensure_ascii=False, indent=4)
+        print(f"指标已保存至：{os.path.join(out_dir, 'metrics.json')}")
+    else:
+        print("无可统计的案例。")

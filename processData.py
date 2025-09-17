@@ -125,8 +125,8 @@ def process_json_file(input_file: str, output_file: str):
 
     for i in tqdm(range(start_index, len(data)), desc="Processing cases"):
         item = data[i]
-        case_id = item.get("CaseId", "")
-        fact_text = item.get("Fact", "")
+        case_id = item.get("text_id", "")
+        fact_text = item.get("text", "")
 
         try:
             extracted = extract_case_info(fact_text)
@@ -166,6 +166,6 @@ def process_json_file(input_file: str, output_file: str):
 
 
 if __name__ == "__main__":
-    input_path = "dataset/Judge/all.json"   # 输入文件路径
-    output_path = "dataset/processed_cases.json"  # 输出文件路径
+    input_path = "dataset/Judge/testProcessed.json"   # 输入文件路径
+    output_path = "dataset/ours/testDataWithEviden.json"  # 输出文件路径
     process_json_file(input_path, output_path)
