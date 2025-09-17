@@ -125,8 +125,8 @@ def process_json_file(input_file: str, output_file: str):
 
     for i in tqdm(range(start_index, len(data)), desc="Processing cases"):
         item = data[i]
-        case_id = item.get("CaseId", "")
-        fact_text = item.get("Fact", "")
+        case_id = item.get("text_id", "")
+        fact_text = item.get("text", "")
 
         try:
             extracted = extract_case_info(fact_text)
