@@ -3,3 +3,6 @@ dataset
 
 #输出文件
 ljp_output
+
+#向量数据库
+chroma
