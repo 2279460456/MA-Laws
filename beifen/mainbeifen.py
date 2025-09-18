@@ -1,7 +1,10 @@
+from email import message
+from tkinter import NO
 from autogen import (UserProxyAgent, AssistantAgent, GroupChat, GroupChatManager,config_list_from_json)
 import time
 import json
 import os
+import re
 
 # === 全局配置 ===
 N_ROUNDS = 10
@@ -13,11 +16,56 @@ MODEL_CONFIG = {
     "timeout": 300,
 }
 
-def run_simulation(case_data: dict):
+def extract_law_articles_from_text(text: str):
+    try:
+        # 尝试从文本中提取第一个JSON对象
+        match = re.search(r"\{[\s\S]*?\}", text)
+        if not match:
+            return []
+        data = json.loads(match.group(0))
+        arts = data.get("Law Articles", [])
+        # 归一化为整数列表
+        normalized = []
+        for a in arts:
+            try:
+                normalized.append(int(a))
+            except Exception:
+                # 尝试从字符串中提取数字
+                m = re.search(r"\d+", str(a))
+                if m:
+                    normalized.append(int(m.group(0)))
+        return normalized
+    except Exception:
+        return []
+
+
+def extract_law_articles_from_messages(messages):
+    # 从审判长最新消息中解析结构化结果
+    for msg in reversed(messages):
+        if msg.get("name") == "PresidingJudge":
+            content = msg.get("content", "")
+            arts = extract_law_articles_from_text(content)
+            if arts:
+                return arts
+    return []
+
+
+def compute_prf1(pred_list, true_list):
+    pred_set = set(pred_list)
+    true_set = set(true_list)
+    tp = len(pred_set & true_set)
+    pred_n = len(pred_set)
+    true_n = len(true_set)
+    precision = tp / pred_n if pred_n > 0 else (1.0 if true_n == 0 else 0.0)
+    recall = tp / true_n if true_n > 0 else 1.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    return precision, recall, f1
+
+
+def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     """
     运行一个完整的法庭模拟案例。
-
-    :param case_data: 包含案件所有信息的字典，应包含 'index', 'CaseId', 'case_description, "defendant_evidence","plaintiff_evidence"'
+    param case_data: 包含案件所有信息的字典，应包含 'index', 'CaseId', 'case_description, "defendant_evidence","plaintiff_evidence"'
     """
     case_index = case_data['index']
     CaseId = case_data['CaseId']
@@ -25,21 +73,51 @@ def run_simulation(case_data: dict):
     defendant_evidence = case_data['defendant_evidence']
     plaintiff_evidence = case_data['plaintiff_evidence']
 
-    
     print(f"\n===== 正在运行模拟案例 {case_index}: {CaseId} =====\n")
 
-    # 讨论结束判断类
     class CourtTerminator:
-        def __init__(self, max_rounds):
-            self.round_count = 0
-            self.max_rounds = max_rounds
+        def __init__(self,DefendantTeamDelegate,PlaintiffTeamDelegate,PresidingJudge):
+            self.DefendantTeamDelegate = DefendantTeamDelegate
+            self.PlaintiffTeamDelegate = PlaintiffTeamDelegate
+            self.PresidingJudge = PresidingJudge
+            self.plaintiff_spoken = False
+            self.defendant_spoken = False
+            self.plaintiff_supplement_done = False
+            self.defendant_supplement_done = False
+        def bind_manager(self, manager):
+            self.manager = manager
+            # print(dir(self.manager))
+        def __call__(self, msg):
+            # print(f'赵智自行打印的msg：\n{isinstance(msg,dict)}\n{msg}')
 
-        def __call__(self, x):
-            self.round_count += 1
-            # 只在达到最大轮数时结束对话
-            return self.round_count >= self.max_rounds
+            name = msg.get("name")
+            if name == "PlaintiffTeamDelegate":
+                self.plaintiff_spoken = True
+            if name == "DefendantTeamDelegate":
+                self.defendant_spoken = True
 
-    terminator = CourtTerminator(max_rounds=N_ROUNDS)
+            # 当原告已发言 且 还没补充证据 → 插入补充环节
+            if self.plaintiff_spoken and not self.plaintiff_supplement_done and plaintiff_evidence:
+                self.plaintiff_supplement_done = True
+                print("🔎 进入证据补充环节：允许原告补充一次证据")
+                # 后续对request_reply设置为True或False进行效果测试
+                self.PlaintiffTeamDelegate.send(message=f'原告补充证据集和：{plaintiff_evidence}',recipient=self.manager,request_reply=True)
+                return False  # 不结束
+            # 当被告已发言 且 还没补充证据 → 插入补充环节
+            if self.defendant_spoken and not self.defendant_supplement_done and defendant_evidence:
+                self.defendant_supplement_done = True
+                print("🔎 进入证据补充环节：允许被告补充一次证据")
+                # 后续对request_reply设置为True或False进行效果测试
+                self.DefendantTeamDelegate.send(message=f'被告补充证据集和：{defendant_evidence}',recipient=self.manager,request_reply=True)
+                return False  # 不结束
+
+            # 只允许 PresidingJudge 说“庭审结束”时中断
+            if msg.get("name") == "PresidingJudge" and "庭审结束" in msg.get("content", ""):
+                return True
+
+            return False
+
+    
 
     # 用于收集所有内部讨论历史的列表
     all_plaintiff_internal_debates = []
@@ -49,32 +127,50 @@ def run_simulation(case_data: dict):
     PresidingJudge = AssistantAgent(
         name="PresidingJudge",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是一名公正中立的审判长。你的任务是审查完整的庭审辩论记录，并在此基础上做出最终判决。"
-            "你的判决应该是全面的，考虑到所有提出的证据、论点和各方意见。"
-            "请严格按照以下格式输出："
-            "【案件事实】：……"
-            "【证据与理由】：……"
-            "【最终判决如下】：明确写明罪名、量刑、罚金金额（如有）、附加刑（如有）、以及适用的法律条款。"
-        )
-
-    )
-
-    # === 创建审判员 (主导辩论) ===
-    Adjudicator = AssistantAgent(
-        name="Adjudicator",
-        llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是一名公正严谨的审判员。你的职责是主持庭审，"
-            "引导原告与被告围绕案件核心问题展开有序辩论，确保程序公正与充分辩论。"
+        system_message = (
+            "你是一名公正严谨的审判长。你的职责是主持庭审，"
+            "引导原告与被告围绕案件核心问题展开有序辩论，确保程序公正与充分辩论，"
+            "并在庭审结束后根据完整的庭审辩论记录做出最终判决。"
             "在庭审过程中，你需要："
             "1. 积极询问双方当事人，核实关键事实；"
             "2. 审查和质证证据，确保其真实性与关联性；"
             "3. 针对争议焦点提出专业性意见，提示法律适用问题；"
-            "4. 控制庭审节奏，保证讨论在规定轮次内充分进行。"
-            "请始终保持中立、公正，并引导庭审向清晰、有效的结论推进。"
+            "4. 控制庭审节奏，保证讨论在规定轮次内充分进行；"
+            "5. 始终保持中立、公正，并引导庭审向清晰、有效的结论推进；"
+            "6. 如果原告或被告在庭审过程中补充新的证据，则继续庭审，直至所有补充证据得到充分质证。"
+            "在庭审结束后，你需要："
+            "综合所有提出的证据、论点和各方意见，"
+            "并严格按照以下格式输出最终判决："
+            "庭审结束，现将宣告最终庭审结果："
+            "【案件事实】：……"
+            "【证据与理由】：……"
+            "【最终判决如下】：应当明确写明罪名、量刑、罚金金额（如有）、附加刑（如有），并仅列出适用的《刑法》条款。"
+            
+            "同时，你还需要输出结构化结果，格式如下(注意：Law Articles 中必须是纯数字)："
+            "{"
+            "\"Sentence\": [\"……\"],"
+            "\"Fine\": [\"……\"],"
+            "\"Crime Type\": [\"……\"],"
+            "\"Law Articles\": [\"……\", \"……\"]"
+            "}"
         )
     )
+
+    # === 创建审判员 (主导辩论) ===
+    # Adjudicator = AssistantAgent(
+    #     name="Adjudicator",
+    #     llm_config=MODEL_CONFIG,
+    #     system_message=(
+    #         "你是一名公正严谨的审判员。你的职责是主持庭审，"
+    #         "引导原告与被告围绕案件核心问题展开有序辩论，确保程序公正与充分辩论。"
+    #         "在庭审过程中，你需要："
+    #         "1. 积极询问双方当事人，核实关键事实；"
+    #         "2. 审查和质证证据，确保其真实性与关联性；"
+    #         "3. 针对争议焦点提出专业性意见，提示法律适用问题；"
+    #         "4. 控制庭审节奏，保证讨论在规定轮次内充分进行。"
+    #         "请始终保持中立、公正，并引导庭审向清晰、有效的结论推进。"
+    #     )
+    # )
 
     # === 创建原告团队成员 ===
     PlaintiffLeadCounsel = AssistantAgent(
@@ -85,6 +181,9 @@ def run_simulation(case_data: dict):
             "你的任务是：组织团队讨论，协调证据专家、法律研究员和客户联络人的意见，"
             "并将团队的内部讨论结果整合成一份逻辑清晰、具有说服力的最终意见。"
             "你不直接在法庭上发言，你的意见会交由原告团队代表在法庭上传达。"
+            "当被告提出论点或证据时，你需要从整体策略角度，组织团队作出合理、科学、有据的反驳。"
+            "如果之前提出的一些论据尚未被采纳或认可，你可以继续组织团队对这些论据进行辩论和强化；"
+            "如果团队有新的论据需要提出，你也应当一并整合进整体策略。"
             f"案件描述: {case_description}"
         )
     )
@@ -97,7 +196,7 @@ def run_simulation(case_data: dict):
             "你的任务是：全面分析案件描述中的所有证据，筛选对原告有利的部分，"
             "协助团队合理地举证，并在庭审中帮助反驳对方对证据的质疑。"
             "你不得编造或扩展案件之外的证据，必须严格基于案件描述进行分析。"
-            "你不需要进行法律条文研究或发言总结。"
+            "当被告提出论点或证据时，你需要从证据分析角度，作出合理、科学、有据的反驳。"
             f"案件描述: {case_description}"
         )
     )
@@ -110,6 +209,7 @@ def run_simulation(case_data: dict):
             "你的任务是：为团队提供与案件相关的法律条文、司法解释和判例，"
             "确保原告的论点在法律上站得住脚，并为反驳被告的法律主张提供依据。"
             "你不负责证据分析或客户诉求表达，只需从法律角度提供专业见解。"
+            "当被告提出论点或证据时，你需要从法律适用和判例角度，作出合理、科学、有据的反驳。"
             f"案件描述: {case_description}"
         )
     )
@@ -122,6 +222,7 @@ def run_simulation(case_data: dict):
             "你的职责是：确保团队的论点与原告的核心诉求保持一致，"
             "在内部讨论中传达原告的关切和优先目标，提醒团队不要偏离原告真正关心的问题。"
             "你不负责法律研究或证据分析，但你的意见对团队整体策略具有指导作用。"
+            "当被告提出论点或证据时，你需要从客户诉求与利益的角度，作出合理、科学、有据的反驳。"
             f"案件描述: {case_description}"
         )
     )
@@ -131,7 +232,7 @@ def run_simulation(case_data: dict):
     plaintiff_internal_groupchat = GroupChat(
         agents=plaintiff_internal_agents,
         messages=[],
-        max_round=5, # 内部讨论轮次可以少一些
+        max_round=6, # 内部讨论轮次可以少一些
         speaker_selection_method="round_robin",
         allow_repeat_speaker=False, # 内部讨论不应该重复发言人
         select_speaker_auto_verbose=False # 设置为True会展示为什么选择这个人
@@ -195,9 +296,13 @@ def run_simulation(case_data: dict):
         llm_config=MODEL_CONFIG,
         system_message=(
             "你是原告团队在法庭上的唯一代表，负责正式发言。"
-            "你的任务是接收法庭信息，将其传递给原告团队内部进行讨论，"
-            "并在团队首席律师整合出最终意见后，将该意见忠实地作为你的发言提交给法庭。"
-            "你不能自行生成或修改观点，你的职责仅是忠实、准确地传达原告团队的集体意见。"
+            "你的任务是："
+            "1. 参与与法官、被告发言人的讨论，始终站在原告立场，积极维护原告的利益；"
+            "2. 总结当前庭审讨论的情况、争议焦点和待解决的问题，并反馈给原告团队内部；"
+            "3. 将团队内部四位成员（首席律师、证据专家、法律研究员、客户联络人）的讨论意见交由首席律师整合；"
+            "4. 忠实、准确地将首席律师整合出的最终意见作为你的发言提交给法庭。"
+            "你不能自行生成或修改论点，你的职责是："
+            "总结庭审情况，反馈信息，准确传递并表达原告团队的立场和意见。"
         ),
         internal_manager=plaintiff_internal_manager,
         case_description=case_description,
@@ -213,6 +318,9 @@ def run_simulation(case_data: dict):
             "你的任务是组织团队讨论，整合证据专家、法律研究员和客户联络人的意见，"
             "并将这些意见汇总成逻辑清晰、具有说服力的最终辩护立场。"
             "你不直接在法庭上发言，你的最终意见将交由被告团队代表在法庭上传达。"
+            "当原告提出论点或证据时，你需要从整体策略角度，组织团队作出合理、科学、有据的反驳。"
+            "如果之前提出的一些论据尚未被采纳或认可，你可以继续组织团队对这些论据进行辩论和强化；"
+            "如果团队有新的论据需要提出，你也应当一并整合进整体辩护策略。"
             f"案件描述: {case_description}"
         )
     )
@@ -225,7 +333,7 @@ def run_simulation(case_data: dict):
             "你的任务是全面分析证据，找出对被告有利的部分，"
             "并帮助团队在庭审中有效地呈现这些证据，反驳原告对证据的质疑。"
             "你不能编造或补充案件之外的新证据，只能基于案件描述进行分析。"
-            "你不负责法律条文研究或客户诉求表达。"
+            "当原告提出论点或证据时，你需要从证据分析角度，作出合理、科学、有据的反驳。"
             f"案件描述: {case_description}"
         )
     )
@@ -238,6 +346,7 @@ def run_simulation(case_data: dict):
             "你的任务是为团队提供与案件相关的法律条文、司法解释和判例，"
             "确保被告的论点在法律上站得住脚，并能有效回应原告提出的法律主张。"
             "你不负责证据分析或客户诉求表达，只需从法律角度提供专业见解。"
+            "当原告提出论点或证据时，你需要从法律适用和判例角度，作出合理、科学、有据的反驳。"
             f"案件描述: {case_description}"
         )
     )
@@ -250,6 +359,7 @@ def run_simulation(case_data: dict):
             "你的任务是确保团队的论点与被告的核心诉求一致，"
             "在内部讨论中传达被告的关注点和优先目标，提醒团队保持与当事人利益的紧密联系。"
             "你不参与具体的法律研究或证据分析，但你的意见对团队整体策略具有指导作用。"
+            "当原告提出论点或证据时，你需要从客户诉求与利益的角度，作出合理、科学、有据的反驳。"
             f"案件描述: {case_description}"
         )
     )
@@ -259,7 +369,7 @@ def run_simulation(case_data: dict):
     defendant_internal_groupchat = GroupChat(
         agents=defendant_internal_agents,
         messages=[],
-        max_round=5, # 内部讨论轮次可以少一些
+        max_round=6, # 内部讨论轮次可以少一些
         speaker_selection_method="round_robin",
         allow_repeat_speaker=False, # 内部讨论不应该重复发言人
         select_speaker_auto_verbose=False # 设置为True会展示为什么选择这个人
@@ -330,8 +440,9 @@ def run_simulation(case_data: dict):
         all_internal_debates=all_defendant_internal_debates # 传递列表
     )
 
+    terminator = CourtTerminator(DefendantTeamDelegate=DefendantTeamDelegate,PlaintiffTeamDelegate=PlaintiffTeamDelegate,PresidingJudge=PresidingJudge)
     # === 构建群体对话系统 ===
-    debate_agents = [Adjudicator, PresidingJudge, PlaintiffTeamDelegate, DefendantTeamDelegate]
+    debate_agents = [PresidingJudge, PlaintiffTeamDelegate, DefendantTeamDelegate]
     groupchat = GroupChat(
         agents=debate_agents,
         messages=[],
@@ -347,6 +458,10 @@ def run_simulation(case_data: dict):
         is_termination_msg=terminator
     )
 
+    #延迟注入manager
+    terminator.bind_manager(manager)
+
+
     # === 阶段一：庭审辩论 ===
     time.sleep(3)
     initial_message = (
@@ -357,7 +472,7 @@ def run_simulation(case_data: dict):
     )
     
     # 由审判员发起并主导庭审辩论
-    chat_result = Adjudicator.initiate_chat(
+    chat_result = PresidingJudge.initiate_chat(
         manager,
         message=initial_message
     )
@@ -382,22 +497,42 @@ def run_simulation(case_data: dict):
                 new_msg['interconversation'] = all_defendant_internal_debates[defendant_debate_index]
                 defendant_debate_index += 1
         final_conversation_history.append(new_msg)
+        
+    #不存在就创建文件夹
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
-    output_dir = "ljp_output"
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    conversation_path = os.path.join(output_dir, f"{case_index}_conversation.json")
+    conversation_path = os.path.join(out_dir, f"{case_index}_conversation.json")
     with open(conversation_path, "w", encoding="utf-8") as f:
         json.dump(final_conversation_history, f, indent=4, ensure_ascii=False)
 
     print(f"\n对话记录已保存到：{conversation_path}")
+
+    # === 计算本案例Law Articles指标 ===
+    pred_articles = extract_law_articles_from_messages(manager.groupchat.messages)
+    true_articles = truth_map.get(CaseId, [])
+    p, r, f1 = compute_prf1(pred_articles, true_articles)
+    print(f"案例 {case_index} ({CaseId}) Law Articles → 预测: {sorted(set(pred_articles))} | 真值: {sorted(set(true_articles))}")
+    print(f"Precision: {p:.4f}  Recall: {r:.4f}  F1: {f1:.4f}")
+
     print(f"\n===== 案例 {case_index}: {CaseId} 模拟结束 =====\n")
+
+    return {
+        "index": case_index,
+        "CaseId": CaseId,
+        "pred_law_articles": sorted(list(set(pred_articles))),
+        "true_law_articles": sorted(list(set(true_articles))),
+        "precision": p,
+        "recall": r,
+        "f1": f1,
+        "conversation_path": conversation_path,
+    }
 
 
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
-    inputDir = 'dataset/ours/processed_cases.json'
+    inputDir = 'dataset/ours/testDataWithEviden.json'
+    out_dir = "ljp_output/9.18"
     try:
         with open(inputDir, "r", encoding="utf-8") as f:
             simulation_cases = json.load(f)
@@ -408,10 +543,72 @@ if __name__ == "__main__":
         print("错误：'cases.json' 文件格式不正确，无法解析。")
         exit()
 
+    # 加载真值Law Articles
+    truth_file = 'dataset/Judge/all.json'
+    try:
+        with open(truth_file, 'r', encoding='utf-8') as f:
+            judge_items = json.load(f)
+    except Exception as e:
+        print(f"错误：无法加载真值文件 {truth_file} ：{e}")
+        exit()
 
-    # 依次运行所有模拟案例
-    for case in simulation_cases:
+    truth_map = {}
+    for item in judge_items:
+        cid = item.get('CaseId')
+        arts = item.get('Law Articles', [])
+        normalized = []
+        for a in arts:
+            try:
+                normalized.append(int(a))
+            except Exception:
+                m = re.search(r"\d+", str(a))
+                if m:
+                    normalized.append(int(m.group(0)))
+        if cid:
+            truth_map[cid] = normalized
+
+    # 依次运行所有模拟案例并统计指标
+    results = []
+    sum_p = 0.0
+    sum_r = 0.0
+    sum_f1 = 0.0
+    case_cnt = 0
+
+    for case in simulation_cases[5:10]:
         if "index" not in case:
             print(f"警告：案件 '{case.get('CaseId', '未命名')}' 缺少 'index' 字段，将跳过此案件。")
             continue
-        run_simulation(case)
+        res = run_simulation(case, truth_map,out_dir)
+        results.append(res)
+        sum_p += res["precision"]
+        sum_r += res["recall"]
+        sum_f1 += res["f1"]
+        case_cnt += 1
+
+    if case_cnt > 0:
+        avg_p = sum_p / case_cnt
+        avg_r = sum_r / case_cnt
+        avg_f1 = sum_f1 / case_cnt
+        print(f"\n=== 所有案例平均指标（Law Articles） ===")
+        print(f"平均 Precision: {avg_p:.4f}")
+        print(f"平均 Recall:    {avg_r:.4f}")
+        print(f"平均 F1:        {avg_f1:.4f}")
+
+        # 保存指标到文件
+        metrics_output = {
+            "per_case": results,
+            "average": {
+                "precision": avg_p,
+                "recall": avg_r,
+                "f1": avg_f1,
+                "cases": case_cnt,
+            },
+        }
+        
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        with open(os.path.join(out_dir, "metrics.json"), "w", encoding="utf-8") as f:
+            json.dump(metrics_output, f, ensure_ascii=False, indent=4)
+        print(f"指标已保存至：{os.path.join(out_dir, 'metrics.json')}")
+    else:
+        print("无可统计的案例。")

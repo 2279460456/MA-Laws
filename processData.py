@@ -166,6 +166,6 @@ def process_json_file(input_file: str, output_file: str):
 
 
 if __name__ == "__main__":
-    input_path = "dataset/Judge/testProcessed.json"   # 输入文件路径
-    output_path = "dataset/ours/testDataWithEviden.json"  # 输出文件路径
+    input_path = "dataset/Judge/testProcessed1.json"   # 输入文件路径
+    output_path = "dataset/ours/testDataWithEviden1.json"  # 输出文件路径
     process_json_file(input_path, output_path)

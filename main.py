@@ -529,10 +529,47 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     }
 
 
+def save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1, completed_indices):
+    """保存断点信息"""
+    checkpoint_data = {
+        "results": results,
+        "case_cnt": case_cnt,
+        "sum_p": sum_p,
+        "sum_r": sum_r,
+        "sum_f1": sum_f1,
+        "completed_indices": completed_indices,
+        "timestamp": time.time()
+    }
+    with open(checkpoint_file, "w", encoding="utf-8") as f:
+        json.dump(checkpoint_data, f, ensure_ascii=False, indent=4)
+    print(f"断点已保存到：{checkpoint_file}")
+
+def load_checkpoint(checkpoint_file):
+    """加载断点信息"""
+    if not os.path.exists(checkpoint_file):
+        return None
+    
+    try:
+        with open(checkpoint_file, "r", encoding="utf-8") as f:
+            checkpoint_data = json.load(f)
+        print(f"找到断点文件，将从中断处继续执行...")
+        print(f"已完成案例数：{checkpoint_data['case_cnt']}")
+        print(f"已完成的案例索引： {checkpoint_data['completed_indices']}")
+        return checkpoint_data
+    except Exception as e:
+        print(f"加载断点文件失败：{e}")
+        return None
+
+def is_case_completed(case_index, completed_indices):
+    """检查案例是否已完成"""
+    return case_index in completed_indices
+
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
-    inputDir = 'dataset/ours/processed_cases.json'
-    out_dir = "ljp_output/9.17"
+    inputDir = 'dataset/ours/testDataWithEviden.json'
+    out_dir = "ljp_output/9.18"
+    checkpoint_file = os.path.join(out_dir, "checkpoint.json")
+    
     try:
         with open(inputDir, "r", encoding="utf-8") as f:
             simulation_cases = json.load(f)
@@ -567,23 +604,65 @@ if __name__ == "__main__":
         if cid:
             truth_map[cid] = normalized
 
-    # 依次运行所有模拟案例并统计指标
-    results = []
-    sum_p = 0.0
-    sum_r = 0.0
-    sum_f1 = 0.0
-    case_cnt = 0
+    # 创建输出目录
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
-    for case in simulation_cases[5:10]:
+    # 尝试加载断点
+    checkpoint_data = load_checkpoint(checkpoint_file)
+    
+    if checkpoint_data:
+        # 从断点恢复
+        results = checkpoint_data["results"]
+        sum_p = checkpoint_data["sum_p"]
+        sum_r = checkpoint_data["sum_r"]
+        sum_f1 = checkpoint_data["sum_f1"]
+        case_cnt = checkpoint_data["case_cnt"]
+        completed_indices = set(checkpoint_data["completed_indices"])
+        print(f"从断点恢复：已完成 {case_cnt} 个案例")
+    else:
+        # 初始化新运行
+        results = []
+        sum_p = 0.0
+        sum_r = 0.0
+        sum_f1 = 0.0
+        case_cnt = 0
+        completed_indices = set()
+        print("开始新的运行...")
+
+    # 依次运行所有模拟案例并统计指标
+    for case in simulation_cases:
         if "index" not in case:
             print(f"警告：案件 '{case.get('CaseId', '未命名')}' 缺少 'index' 字段，将跳过此案件。")
             continue
-        res = run_simulation(case, truth_map,out_dir)
-        results.append(res)
-        sum_p += res["precision"]
-        sum_r += res["recall"]
-        sum_f1 += res["f1"]
-        case_cnt += 1
+            
+        case_index = case["index"]
+        
+        # 检查是否已完成
+        if is_case_completed(case_index, completed_indices):
+            print(f"案例 {case_index} 已完成，跳过...")
+            continue
+            
+        try:
+            print(f"\n开始处理案例 {case_index}...")
+            res = run_simulation(case, truth_map, out_dir)
+            results.append(res)
+            sum_p += res["precision"]
+            sum_r += res["recall"]
+            sum_f1 += res["f1"]
+            case_cnt += 1
+            completed_indices.add(case_index)
+            
+            # 每完成一个案例就保存断点
+            save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1, list(completed_indices))
+            print(f"案例 {case_index} 处理完成，断点已保存")
+            
+        except Exception as e:
+            print(f"处理案例 {case_index} 时发生错误：{e}")
+            print("程序将停止，下次运行时将从断点继续...")
+            # 保存当前进度
+            save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1, list(completed_indices))
+            break
 
     if case_cnt > 0:
         avg_p = sum_p / case_cnt
