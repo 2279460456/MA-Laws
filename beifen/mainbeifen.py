@@ -7,7 +7,8 @@ import os
 import re
 
 # === 全局配置 ===
-N_ROUNDS = 10
+OUT_ROUNDS = 10
+In_ROUNDS = 3
 config_list = config_list_from_json(env_or_file="configs/config_list.json")
 MODEL_CONFIG = {
     "config_list": config_list,
@@ -117,8 +118,6 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
 
             return False
 
-    
-
     # 用于收集所有内部讨论历史的列表
     all_plaintiff_internal_debates = []
     all_defendant_internal_debates = []
@@ -128,25 +127,15 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
         name="PresidingJudge",
         llm_config=MODEL_CONFIG,
         system_message = (
-            "你是一名公正严谨的审判长。你的职责是主持庭审，"
-            "引导原告与被告围绕案件核心问题展开有序辩论，确保程序公正与充分辩论，"
-            "并在庭审结束后根据完整的庭审辩论记录做出最终判决。"
-            "在庭审过程中，你需要："
-            "1. 积极询问双方当事人，核实关键事实；"
-            "2. 审查和质证证据，确保其真实性与关联性；"
-            "3. 针对争议焦点提出专业性意见，提示法律适用问题；"
-            "4. 控制庭审节奏，保证讨论在规定轮次内充分进行；"
-            "5. 始终保持中立、公正，并引导庭审向清晰、有效的结论推进；"
-            "6. 如果原告或被告在庭审过程中补充新的证据，则继续庭审，直至所有补充证据得到充分质证。"
-            "在庭审结束后，你需要："
-            "综合所有提出的证据、论点和各方意见，"
-            "并严格按照以下格式输出最终判决："
-            "庭审结束，现将宣告最终庭审结果："
+            "你是一名公正严谨的审判长，你的职责是主持庭审，"
+            "引导原告与被告围绕案件核心问题充分辩论，保持中立并控制节奏，"
+            "积极核实事实、审查证据，若有新证据需继续质证，"
+            "在庭审结束后依据证据和意见做出判决，"
+            "并严格按照以下格式输出："
             "【案件事实】：……"
             "【证据与理由】：……"
-            "【最终判决如下】：应当明确写明罪名、量刑、罚金金额（如有）、附加刑（如有），并仅列出适用的《刑法》条款。"
-            
-            "同时，你还需要输出结构化结果，格式如下(注意：Law Articles 中必须是纯数字)："
+            "【最终判决如下】：写明罪名、刑期、罚金（如有）、附加刑（如有），仅列出适用《刑法》条款。"
+            "同时，你还需要输出结构化结果，格式如下(注意：Law Articles 中必须是纯数字，Sentence是刑期，Fine是罚金(罚金的单位是元)，Crime Type是罪名)："
             "{"
             "\"Sentence\": [\"……\"],"
             "\"Fine\": [\"……\"],"
@@ -156,35 +145,19 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
         )
     )
 
-    # === 创建审判员 (主导辩论) ===
-    # Adjudicator = AssistantAgent(
-    #     name="Adjudicator",
-    #     llm_config=MODEL_CONFIG,
-    #     system_message=(
-    #         "你是一名公正严谨的审判员。你的职责是主持庭审，"
-    #         "引导原告与被告围绕案件核心问题展开有序辩论，确保程序公正与充分辩论。"
-    #         "在庭审过程中，你需要："
-    #         "1. 积极询问双方当事人，核实关键事实；"
-    #         "2. 审查和质证证据，确保其真实性与关联性；"
-    #         "3. 针对争议焦点提出专业性意见，提示法律适用问题；"
-    #         "4. 控制庭审节奏，保证讨论在规定轮次内充分进行。"
-    #         "请始终保持中立、公正，并引导庭审向清晰、有效的结论推进。"
-    #     )
-    # )
-
     # === 创建原告团队成员 ===
     PlaintiffLeadCounsel = AssistantAgent(
         name="PlaintiffLeadCounsel",
         llm_config=MODEL_CONFIG,
         system_message=(
             "你是原告首席律师，负责领导团队并制定整体诉讼策略。"
-            "你的任务是：组织团队讨论，协调证据专家、法律研究员和客户联络人的意见，"
+            "你的任务是：组织团队讨论，协调证据专家、法律研究员的意见，"
             "并将团队的内部讨论结果整合成一份逻辑清晰、具有说服力的最终意见。"
             "你不直接在法庭上发言，你的意见会交由原告团队代表在法庭上传达。"
             "当被告提出论点或证据时，你需要从整体策略角度，组织团队作出合理、科学、有据的反驳。"
             "如果之前提出的一些论据尚未被采纳或认可，你可以继续组织团队对这些论据进行辩论和强化；"
             "如果团队有新的论据需要提出，你也应当一并整合进整体策略。"
-            f"案件描述: {case_description}"
+            # f"案件描述: {case_description}"
         )
     )
 
@@ -197,7 +170,7 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
             "协助团队合理地举证，并在庭审中帮助反驳对方对证据的质疑。"
             "你不得编造或扩展案件之外的证据，必须严格基于案件描述进行分析。"
             "当被告提出论点或证据时，你需要从证据分析角度，作出合理、科学、有据的反驳。"
-            f"案件描述: {case_description}"
+            # f"案件描述: {case_description}"
         )
     )
 
@@ -208,31 +181,17 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
             "你是原告法律研究员，专注于法律依据和判例支持。"
             "你的任务是：为团队提供与案件相关的法律条文、司法解释和判例，"
             "确保原告的论点在法律上站得住脚，并为反驳被告的法律主张提供依据。"
-            "你不负责证据分析或客户诉求表达，只需从法律角度提供专业见解。"
             "当被告提出论点或证据时，你需要从法律适用和判例角度，作出合理、科学、有据的反驳。"
-            f"案件描述: {case_description}"
-        )
-    )
-
-    PlaintiffClientLiaison = AssistantAgent(
-        name="PlaintiffClientLiaison",
-        llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是原告客户联络人，唯一任务是代表原告的利益与意愿。"
-            "你的职责是：确保团队的论点与原告的核心诉求保持一致，"
-            "在内部讨论中传达原告的关切和优先目标，提醒团队不要偏离原告真正关心的问题。"
-            "你不负责法律研究或证据分析，但你的意见对团队整体策略具有指导作用。"
-            "当被告提出论点或证据时，你需要从客户诉求与利益的角度，作出合理、科学、有据的反驳。"
-            f"案件描述: {case_description}"
+            # f"案件描述: {case_description}"
         )
     )
 
     # === 创建原告团队内部群聊 ===
-    plaintiff_internal_agents = [PlaintiffLeadCounsel, PlaintiffEvidenceSpecialist, PlaintiffLegalResearcher, PlaintiffClientLiaison]
+    plaintiff_internal_agents = [PlaintiffEvidenceSpecialist, PlaintiffLegalResearcher,PlaintiffLeadCounsel]
     plaintiff_internal_groupchat = GroupChat(
         agents=plaintiff_internal_agents,
         messages=[],
-        max_round=6, # 内部讨论轮次可以少一些
+        max_round=In_ROUNDS, # 内部讨论轮次可以少一些
         speaker_selection_method="round_robin",
         allow_repeat_speaker=False, # 内部讨论不应该重复发言人
         select_speaker_auto_verbose=False # 设置为True会展示为什么选择这个人
@@ -296,18 +255,16 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
         llm_config=MODEL_CONFIG,
         system_message=(
             "你是原告团队在法庭上的唯一代表，负责正式发言。"
-            "你的任务是："
-            "1. 参与与法官、被告发言人的讨论，始终站在原告立场，积极维护原告的利益；"
-            "2. 总结当前庭审讨论的情况、争议焦点和待解决的问题，并反馈给原告团队内部；"
-            "3. 将团队内部四位成员（首席律师、证据专家、法律研究员、客户联络人）的讨论意见交由首席律师整合；"
-            "4. 忠实、准确地将首席律师整合出的最终意见作为你的发言提交给法庭。"
-            "你不能自行生成或修改论点，你的职责是："
-            "总结庭审情况，反馈信息，准确传递并表达原告团队的立场和意见。"
+            "你的任务是接收法庭信息，将其转交给原告团队内部进行讨论，"
+            "并在首席律师整合出最终意见后，将该意见忠实地作为你的发言呈现给法庭。"
+            "你不能添加、修改或删除团队的观点，你的职责是准确、忠实地传达团队的集体意见。"
         ),
         internal_manager=plaintiff_internal_manager,
         case_description=case_description,
         all_internal_debates=all_plaintiff_internal_debates # 传递列表
     )
+
+
 
     # === 创建被告团队成员 ===
     DefendantLeadCounsel = AssistantAgent(
@@ -315,13 +272,13 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
         llm_config=MODEL_CONFIG,
         system_message=(
             "你是被告首席律师，负责领导和协调整个被告团队。"
-            "你的任务是组织团队讨论，整合证据专家、法律研究员和客户联络人的意见，"
+            "你的任务是组织团队讨论，整合证据专家、法律研究员的意见，"
             "并将这些意见汇总成逻辑清晰、具有说服力的最终辩护立场。"
             "你不直接在法庭上发言，你的最终意见将交由被告团队代表在法庭上传达。"
             "当原告提出论点或证据时，你需要从整体策略角度，组织团队作出合理、科学、有据的反驳。"
             "如果之前提出的一些论据尚未被采纳或认可，你可以继续组织团队对这些论据进行辩论和强化；"
             "如果团队有新的论据需要提出，你也应当一并整合进整体辩护策略。"
-            f"案件描述: {case_description}"
+            # f"案件描述: {case_description}"
         )
     )
 
@@ -334,7 +291,7 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
             "并帮助团队在庭审中有效地呈现这些证据，反驳原告对证据的质疑。"
             "你不能编造或补充案件之外的新证据，只能基于案件描述进行分析。"
             "当原告提出论点或证据时，你需要从证据分析角度，作出合理、科学、有据的反驳。"
-            f"案件描述: {case_description}"
+            # f"案件描述: {case_description}"
         )
     )
 
@@ -345,31 +302,17 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
             "你是被告法律研究员，专注于法律依据和判例支持。"
             "你的任务是为团队提供与案件相关的法律条文、司法解释和判例，"
             "确保被告的论点在法律上站得住脚，并能有效回应原告提出的法律主张。"
-            "你不负责证据分析或客户诉求表达，只需从法律角度提供专业见解。"
             "当原告提出论点或证据时，你需要从法律适用和判例角度，作出合理、科学、有据的反驳。"
-            f"案件描述: {case_description}"
-        )
-    )
-
-    DefendantClientLiaison = AssistantAgent(
-        name="DefendantClientLiaison",
-        llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是被告客户联络人，代表被告的个人利益和意愿。"
-            "你的任务是确保团队的论点与被告的核心诉求一致，"
-            "在内部讨论中传达被告的关注点和优先目标，提醒团队保持与当事人利益的紧密联系。"
-            "你不参与具体的法律研究或证据分析，但你的意见对团队整体策略具有指导作用。"
-            "当原告提出论点或证据时，你需要从客户诉求与利益的角度，作出合理、科学、有据的反驳。"
-            f"案件描述: {case_description}"
+            # f"案件描述: {case_description}"
         )
     )
 
     # === 创建被告团队内部群聊 ===
-    defendant_internal_agents = [DefendantLeadCounsel, DefendantEvidenceSpecialist, DefendantLegalResearcher, DefendantClientLiaison]
+    defendant_internal_agents = [DefendantEvidenceSpecialist, DefendantLegalResearcher,DefendantLeadCounsel]
     defendant_internal_groupchat = GroupChat(
         agents=defendant_internal_agents,
         messages=[],
-        max_round=6, # 内部讨论轮次可以少一些
+        max_round=In_ROUNDS, 
         speaker_selection_method="round_robin",
         allow_repeat_speaker=False, # 内部讨论不应该重复发言人
         select_speaker_auto_verbose=False # 设置为True会展示为什么选择这个人
@@ -446,7 +389,7 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     groupchat = GroupChat(
         agents=debate_agents,
         messages=[],
-        max_round=N_ROUNDS,
+        max_round=OUT_ROUNDS,
         speaker_selection_method="auto",
         allow_repeat_speaker=False,
         select_speaker_auto_verbose=False
@@ -529,10 +472,47 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     }
 
 
+def save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1, completed_indices):
+    """保存断点信息"""
+    checkpoint_data = {
+        "results": results,
+        "case_cnt": case_cnt,
+        "sum_p": sum_p,
+        "sum_r": sum_r,
+        "sum_f1": sum_f1,
+        "completed_indices": completed_indices,
+        "timestamp": time.time()
+    }
+    with open(checkpoint_file, "w", encoding="utf-8") as f:
+        json.dump(checkpoint_data, f, ensure_ascii=False, indent=4)
+    print(f"断点已保存到：{checkpoint_file}")
+
+def load_checkpoint(checkpoint_file):
+    """加载断点信息"""
+    if not os.path.exists(checkpoint_file):
+        return None
+    
+    try:
+        with open(checkpoint_file, "r", encoding="utf-8") as f:
+            checkpoint_data = json.load(f)
+        print(f"找到断点文件，将从中断处继续执行...")
+        print(f"已完成案例数：{checkpoint_data['case_cnt']}")
+        print(f"已完成的案例索引： {checkpoint_data['completed_indices']}")
+        return checkpoint_data
+    except Exception as e:
+        print(f"加载断点文件失败：{e}")
+        return None
+
+def is_case_completed(case_index, completed_indices):
+    """检查案例是否已完成"""
+    return case_index in completed_indices
+
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
     inputDir = 'dataset/ours/testDataWithEviden.json'
-    out_dir = "ljp_output/9.18"
+    out_dir = "ljp_output/9.20"
+    checkpoint_file = os.path.join(out_dir, "checkpoint.json")
+    
     try:
         with open(inputDir, "r", encoding="utf-8") as f:
             simulation_cases = json.load(f)
@@ -567,23 +547,65 @@ if __name__ == "__main__":
         if cid:
             truth_map[cid] = normalized
 
-    # 依次运行所有模拟案例并统计指标
-    results = []
-    sum_p = 0.0
-    sum_r = 0.0
-    sum_f1 = 0.0
-    case_cnt = 0
+    # 创建输出目录
+    if not os.path.exists(out_dir):
+        os.makedirs(out_dir)
 
-    for case in simulation_cases[5:10]:
+    # 尝试加载断点
+    checkpoint_data = load_checkpoint(checkpoint_file)
+    
+    if checkpoint_data:
+        # 从断点恢复
+        results = checkpoint_data["results"]
+        sum_p = checkpoint_data["sum_p"]
+        sum_r = checkpoint_data["sum_r"]
+        sum_f1 = checkpoint_data["sum_f1"]
+        case_cnt = checkpoint_data["case_cnt"]
+        completed_indices = set(checkpoint_data["completed_indices"])
+        print(f"从断点恢复：已完成 {case_cnt} 个案例")
+    else:
+        # 初始化新运行
+        results = []
+        sum_p = 0.0
+        sum_r = 0.0
+        sum_f1 = 0.0
+        case_cnt = 0
+        completed_indices = set()
+        print("开始新的运行...")
+
+    # 依次运行所有模拟案例并统计指标
+    for case in simulation_cases:
         if "index" not in case:
             print(f"警告：案件 '{case.get('CaseId', '未命名')}' 缺少 'index' 字段，将跳过此案件。")
             continue
-        res = run_simulation(case, truth_map,out_dir)
-        results.append(res)
-        sum_p += res["precision"]
-        sum_r += res["recall"]
-        sum_f1 += res["f1"]
-        case_cnt += 1
+            
+        case_index = case["index"]
+        
+        # 检查是否已完成
+        if is_case_completed(case_index, completed_indices):
+            print(f"案例 {case_index} 已完成，跳过...")
+            continue
+            
+        try:
+            print(f"\n开始处理案例 {case_index}...")
+            res = run_simulation(case, truth_map, out_dir)
+            results.append(res)
+            sum_p += res["precision"]
+            sum_r += res["recall"]
+            sum_f1 += res["f1"]
+            case_cnt += 1
+            completed_indices.add(case_index)
+            
+            # 每完成一个案例就保存断点
+            save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1, list(completed_indices))
+            print(f"案例 {case_index} 处理完成，断点已保存")
+            
+        except Exception as e:
+            print(f"处理案例 {case_index} 时发生错误：{e}")
+            print("程序将停止，下次运行时将从断点继续...")
+            # 保存当前进度
+            save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1, list(completed_indices))
+            break
 
     if case_cnt > 0:
         avg_p = sum_p / case_cnt
