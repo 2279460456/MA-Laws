@@ -1,8 +1,5 @@
-import json
-import os
 import chromadb
-from chromadb import Documents, EmbeddingFunction, Embeddings
-from chromadb.utils import embedding_functions
+import ast  # 用于安全解析字符串为list
 
 # 数据保存至本地目录
 client = chromadb.PersistentClient(path="./chroma")
@@ -14,4 +11,16 @@ res = collection.query(
   n_results=5
 )
 
-print(res)
+# 提取所有 laws 字段
+metas = res["metadatas"][0]  # 取第一个query的所有检索结果
+all_laws = []
+
+for m in metas:
+    # 将字符串 '[64, 67, 52]' 转换为列表 [64, 67, 52]
+    laws = ast.literal_eval(m['laws'])
+    all_laws.extend(laws)
+
+# 去重并排序（如果不需要排序可以去掉sorted）
+unique_laws = sorted(set(all_laws))
+
+print(unique_laws)

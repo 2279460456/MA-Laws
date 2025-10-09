@@ -1,15 +1,20 @@
 from email import message
 from tkinter import NO
-from autogen import (UserProxyAgent, AssistantAgent, GroupChat, GroupChatManager,config_list_from_json)
+import asyncio
+from autogen import ( AssistantAgent, GroupChat, GroupChatManager,config_list_from_json)
+from utils import (findCase,getPrompt)
 import time
 import json
 import os
 import re
+import chromadb
+import ast  # 用于安全解析字符串为list
 
 # === 全局配置 ===
 OUT_ROUNDS = 10
-In_ROUNDS = 3
+In_ROUNDS = 4
 config_list = config_list_from_json(env_or_file="configs/config_list.json")
+
 MODEL_CONFIG = {
     "config_list": config_list,
     "cache_seed": None,
@@ -113,7 +118,7 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
                 return False  # 不结束
 
             # 只允许 PresidingJudge 说“庭审结束”时中断
-            if msg.get("name") == "PresidingJudge" and "庭审结束" in msg.get("content", ""):
+            if msg.get("name") == "PresidingJudge" and any(kw in msg.get("content", "") for kw in ["庭审结束", "本次审理到此结束", "宣判完毕"]):
                 return True
 
             return False
@@ -126,64 +131,26 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     PresidingJudge = AssistantAgent(
         name="PresidingJudge",
         llm_config=MODEL_CONFIG,
-        system_message = (
-            "你是一名公正严谨的审判长，你的职责是主持庭审，"
-            "引导原告与被告围绕案件核心问题充分辩论，保持中立并控制节奏，"
-            "积极核实事实、审查证据，若有新证据需继续质证，"
-            "在庭审结束后依据证据和意见做出判决，"
-            "并严格按照以下格式输出："
-            "【案件事实】：……"
-            "【证据与理由】：……"
-            "【最终判决如下】：写明罪名、刑期、罚金（如有）、附加刑（如有），仅列出适用《刑法》条款。"
-            "同时，你还需要输出结构化结果，格式如下(注意：Law Articles 中必须是纯数字，Sentence是刑期，Fine是罚金(罚金的单位是元)，Crime Type是罪名)："
-            "{"
-            "\"Sentence\": [\"……\"],"
-            "\"Fine\": [\"……\"],"
-            "\"Crime Type\": [\"……\"],"
-            "\"Law Articles\": [\"……\", \"……\"]"
-            "}"
-        )
+        system_message = getPrompt('PresidingJudge')
     )
 
     # === 创建原告团队成员 ===
     PlaintiffLeadCounsel = AssistantAgent(
         name="PlaintiffLeadCounsel",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是原告首席律师，负责领导团队并制定整体诉讼策略。"
-            "你的任务是：组织团队讨论，协调证据专家、法律研究员的意见，"
-            "并将团队的内部讨论结果整合成一份逻辑清晰、具有说服力的最终意见。"
-            "你不直接在法庭上发言，你的意见会交由原告团队代表在法庭上传达。"
-            "当被告提出论点或证据时，你需要从整体策略角度，组织团队作出合理、科学、有据的反驳。"
-            "如果之前提出的一些论据尚未被采纳或认可，你可以继续组织团队对这些论据进行辩论和强化；"
-            "如果团队有新的论据需要提出，你也应当一并整合进整体策略。"
-            # f"案件描述: {case_description}"
-        )
+        system_message=getPrompt('PlaintiffLeadCounsel')
     )
 
     PlaintiffEvidenceSpecialist = AssistantAgent(
         name="PlaintiffEvidenceSpecialist",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是原告证据专家，专注于案件中提供的证据。"
-            "你的任务是：全面分析案件描述中的所有证据，筛选对原告有利的部分，"
-            "协助团队合理地举证，并在庭审中帮助反驳对方对证据的质疑。"
-            "你不得编造或扩展案件之外的证据，必须严格基于案件描述进行分析。"
-            "当被告提出论点或证据时，你需要从证据分析角度，作出合理、科学、有据的反驳。"
-            # f"案件描述: {case_description}"
-        )
+        system_message=getPrompt('PlaintiffEvidenceSpecialist')
     )
 
     PlaintiffLegalResearcher = AssistantAgent(
         name="PlaintiffLegalResearcher",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是原告法律研究员，专注于法律依据和判例支持。"
-            "你的任务是：为团队提供与案件相关的法律条文、司法解释和判例，"
-            "确保原告的论点在法律上站得住脚，并为反驳被告的法律主张提供依据。"
-            "当被告提出论点或证据时，你需要从法律适用和判例角度，作出合理、科学、有据的反驳。"
-            # f"案件描述: {case_description}"
-        )
+        system_message=getPrompt('PlaintiffLegalResearcher')
     )
 
     # === 创建原告团队内部群聊 ===
@@ -211,14 +178,17 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
             super().__init__(*args, **filtered_kwargs)
 
         def generate_reply(self, messages=None, sender=None, exclude=None, **kwargs):
-            # The last message from the main group chat is the one to be discussed internally.
+            if not messages:
+                messages = groupchat.messages
+                print(3333333,messages)
+
             last_message_from_court = messages[-1]["content"] if messages else ""
 
             print(f"\n--- PlaintiffTeamDelegate 收到法庭消息，转发给内部团队讨论 ---")
             internal_message = (
                 f"案件描述: {self.case_description}\n\n"
                 f"法庭传来消息：{last_message_from_court}\n\n"
-                "请团队成员（首席律师、证据专家、法律研究员、客户联络人）仔细分析法庭消息。"
+                "请团队成员（首席律师、证据专家、法律研究员）仔细分析法庭消息。"
                 "围绕案件描述和法庭消息进行充分讨论，并生成一个针对法庭消息的统一、清晰、有力的回复。"
                 "首席律师需要在讨论结束后，对团队讨论的结果进行总结，并确保最终的回复是原创的，并且内容与法庭消息或案件描述有显著区别。"
             )
@@ -253,58 +223,29 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     PlaintiffTeamDelegate = PlaintiffTeamDelegate(
         name="PlaintiffTeamDelegate",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是原告团队在法庭上的唯一代表，负责正式发言。"
-            "你的任务是接收法庭信息，将其转交给原告团队内部进行讨论，"
-            "并在首席律师整合出最终意见后，将该意见忠实地作为你的发言呈现给法庭。"
-            "你不能添加、修改或删除团队的观点，你的职责是准确、忠实地传达团队的集体意见。"
-        ),
+        system_message=getPrompt('PlaintiffTeamDelegate'),
         internal_manager=plaintiff_internal_manager,
         case_description=case_description,
         all_internal_debates=all_plaintiff_internal_debates # 传递列表
     )
 
-
-
     # === 创建被告团队成员 ===
     DefendantLeadCounsel = AssistantAgent(
         name="DefendantLeadCounsel",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是被告首席律师，负责领导和协调整个被告团队。"
-            "你的任务是组织团队讨论，整合证据专家、法律研究员的意见，"
-            "并将这些意见汇总成逻辑清晰、具有说服力的最终辩护立场。"
-            "你不直接在法庭上发言，你的最终意见将交由被告团队代表在法庭上传达。"
-            "当原告提出论点或证据时，你需要从整体策略角度，组织团队作出合理、科学、有据的反驳。"
-            "如果之前提出的一些论据尚未被采纳或认可，你可以继续组织团队对这些论据进行辩论和强化；"
-            "如果团队有新的论据需要提出，你也应当一并整合进整体辩护策略。"
-            # f"案件描述: {case_description}"
-        )
+        system_message=getPrompt('DefendantLeadCounsel'),
     )
 
     DefendantEvidenceSpecialist = AssistantAgent(
         name="DefendantEvidenceSpecialist",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是被告证据专家，专注于案件描述中提供的证据。"
-            "你的任务是全面分析证据，找出对被告有利的部分，"
-            "并帮助团队在庭审中有效地呈现这些证据，反驳原告对证据的质疑。"
-            "你不能编造或补充案件之外的新证据，只能基于案件描述进行分析。"
-            "当原告提出论点或证据时，你需要从证据分析角度，作出合理、科学、有据的反驳。"
-            # f"案件描述: {case_description}"
-        )
+        system_message=getPrompt('DefendantEvidenceSpecialist'),
     )
 
     DefendantLegalResearcher = AssistantAgent(
         name="DefendantLegalResearcher",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是被告法律研究员，专注于法律依据和判例支持。"
-            "你的任务是为团队提供与案件相关的法律条文、司法解释和判例，"
-            "确保被告的论点在法律上站得住脚，并能有效回应原告提出的法律主张。"
-            "当原告提出论点或证据时，你需要从法律适用和判例角度，作出合理、科学、有据的反驳。"
-            # f"案件描述: {case_description}"
-        )
+        system_message=getPrompt('DefendantLegalResearcher'),
     )
 
     # === 创建被告团队内部群聊 ===
@@ -332,7 +273,11 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
             super().__init__(*args, **filtered_kwargs)
 
         def generate_reply(self, messages=None, sender=None, exclude=None, **kwargs):
-            # The last message from the main group chat is the one to be discussed internally.
+            if not messages:
+                messages = groupchat.messages
+                print(55555555,messages)
+
+
             last_message_from_court = messages[-1]["content"] if messages else ""
 
             print(f"\n--- DefendantTeamDelegate 收到法庭消息，转发给内部团队讨论 ---")
@@ -372,12 +317,7 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     DefendantTeamDelegate = DefendantTeamDelegate(
         name="DefendantTeamDelegate",
         llm_config=MODEL_CONFIG,
-        system_message=(
-            "你是被告团队在法庭上的唯一代表，负责正式发言。"
-            "你的任务是接收法庭信息，将其转交给被告团队内部进行讨论，"
-            "并在首席律师整合出最终意见后，将该意见忠实地作为你的发言呈现给法庭。"
-            "你不能添加、修改或删除团队的观点，你的职责是准确、忠实地传达团队的集体意见。"
-        ),
+        system_message=getPrompt('DefendantTeamDelegate'),
         internal_manager=defendant_internal_manager,
         case_description=case_description,
         all_internal_debates=all_defendant_internal_debates # 传递列表
@@ -405,13 +345,21 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     terminator.bind_manager(manager)
 
 
+
+    # === 相似案例检索 ===
+    try:
+        retrieved_laws = findCase(case_description)
+    except Exception as e:
+        print(f"[警告] 相似案例检索失败：{e}")
+        retrieved_laws = []
+
     # === 阶段一：庭审辩论 ===
     time.sleep(3)
     initial_message = (
         f"法庭辩论现在开始。\n【案件编号】: {case_index}\n【案件ID】: {CaseId}\n"
         f"【案情简介】: {case_description}\n\n"
         "我作为审判员将主导本次辩论。原告团队，请提出你的开场陈述，陈述你方的诉求和证据。"
-        "请注意，在辩论过程中，各方只能使用案件描述中提供的信息和证据。"
+        f"经检索相似案例，参考以往判决结果，本案可援引的相关刑法条文包括：{retrieved_laws}。"
     )
     
     # 由审判员发起并主导庭审辩论
@@ -431,16 +379,16 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
 
     for msg in manager.groupchat.messages:
         new_msg = msg.copy()
-        if new_msg.get('name') == "PlaintiffTeamDelegate":
+        if new_msg.get('name') == "PlaintiffTeamDelegate" and '原告补充证据集和：'  not in new_msg.get('content'):
             if plaintiff_debate_index < len(all_plaintiff_internal_debates):
                 new_msg['interconversation'] = all_plaintiff_internal_debates[plaintiff_debate_index]
                 plaintiff_debate_index += 1
-        elif new_msg.get('name') == "DefendantTeamDelegate":
+        elif new_msg.get('name') == "DefendantTeamDelegate" and '被告补充证据集和：' not in new_msg.get('content'):
             if defendant_debate_index < len(all_defendant_internal_debates):
                 new_msg['interconversation'] = all_defendant_internal_debates[defendant_debate_index]
                 defendant_debate_index += 1
         final_conversation_history.append(new_msg)
-        
+    
     #不存在就创建文件夹
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -455,8 +403,7 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
     pred_articles = extract_law_articles_from_messages(manager.groupchat.messages)
     true_articles = truth_map.get(CaseId, [])
     p, r, f1 = compute_prf1(pred_articles, true_articles)
-    print(f"案例 {case_index} ({CaseId}) Law Articles → 预测: {sorted(set(pred_articles))} | 真值: {sorted(set(true_articles))}")
-    print(f"Precision: {p:.4f}  Recall: {r:.4f}  F1: {f1:.4f}")
+    retrieval_overlap = len(set(retrieved_laws) & set(true_articles)) / len(true_articles) if true_articles else 0
 
     print(f"\n===== 案例 {case_index}: {CaseId} 模拟结束 =====\n")
 
@@ -468,9 +415,9 @@ def run_simulation(case_data: dict, truth_map: dict, out_dir: str):
         "precision": p,
         "recall": r,
         "f1": f1,
+        "retrieval_overlap": retrieval_overlap,
         "conversation_path": conversation_path,
     }
-
 
 def save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1, completed_indices):
     """保存断点信息"""
@@ -510,7 +457,7 @@ def is_case_completed(case_index, completed_indices):
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
     inputDir = 'dataset/ours/testDataWithEviden.json'
-    out_dir = "ljp_output/9.20"
+    out_dir = "ljp_output/9.30"
     checkpoint_file = os.path.join(out_dir, "checkpoint.json")
     
     try:
