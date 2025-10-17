@@ -8,7 +8,7 @@ import os
 import re
 
 # === 全局配置 ===
-OUT_ROUNDS = 10
+OUT_ROUNDS = 10  #必须为偶数
 In_ROUNDS = 4
 config_list = config_list_from_json(env_or_file="configs/config_list.json")
 MODEL_CONFIG = {
@@ -219,6 +219,26 @@ class CourtAgents:
             llm_config=MODEL_CONFIG,
             system_message=getPrompt('DefendantLegalResearcher'),
         )
+    # 自定义发言选择逻辑
+    def custom_speaker_selector(self,last_speaker, groupchat):
+
+        round_idx = len(groupchat.messages)  # 当前发言计数（每条消息算一次发言）
+        print(9999999999,last_speaker.name)
+        # 还没到最后一轮：原告与被告轮流发言
+        if round_idx < OUT_ROUNDS - 1:
+            if last_speaker is 'PresidingJudge':
+                # 第一次发言 -> 原告先说
+                return self.plaintiffTeamDelegate
+            elif last_speaker.name == "PlaintiffTeamDelegate":
+                return self.DefendantTeamDelegate
+            else:
+                return self.plaintiffTeamDelegate
+
+        # ✅ 最后一轮让法官发言
+        else:
+            return self.PresidingJudge
+
+
 
     def run_simulation(self, case_data: dict, truth_map: dict, out_dir: str):
         """
@@ -254,7 +274,7 @@ class CourtAgents:
             llm_config=MODEL_CONFIG
         )
         # 原告团队代表
-        plaintiffTeamDelegate = PlaintiffTeamDelegate(
+        self.plaintiffTeamDelegate = PlaintiffTeamDelegate(
             name="PlaintiffTeamDelegate",
             llm_config=MODEL_CONFIG,
             system_message=getPrompt('PlaintiffTeamDelegate'),
@@ -279,7 +299,7 @@ class CourtAgents:
             llm_config=MODEL_CONFIG
         )
         # 被告团队代表
-        defendantTeamDelegate = DefendantTeamDelegate(
+        self.defendantTeamDelegate = DefendantTeamDelegate(
             name="DefendantTeamDelegate",
             llm_config=MODEL_CONFIG,
             system_message=getPrompt('DefendantTeamDelegate'),
@@ -289,17 +309,17 @@ class CourtAgents:
         )
         
         # 实例化判断外部对话何时终止的类
-        terminator = CourtTerminator(defendantTeamDelegate=defendantTeamDelegate, plaintiffTeamDelegate=plaintiffTeamDelegate,
+        terminator = CourtTerminator(defendantTeamDelegate=self.defendantTeamDelegate, plaintiffTeamDelegate=self.plaintiffTeamDelegate,
                                      PresidingJudge=self.PresidingJudge, plaintiff_evidence=plaintiff_evidence, defendant_evidence=defendant_evidence)
 
         # 构建外部对话群聊
         debate_agents = [self.PresidingJudge,
-                         plaintiffTeamDelegate, defendantTeamDelegate]
+                         self.plaintiffTeamDelegate, self.defendantTeamDelegate]
         groupchat = GroupChat(
             agents=debate_agents,
             messages=[],
             max_round=OUT_ROUNDS,
-            speaker_selection_method="auto",
+            speaker_selection_method=self.custom_speaker_selector,
             allow_repeat_speaker=False,
             select_speaker_auto_verbose=False
         )
@@ -311,8 +331,8 @@ class CourtAgents:
 
         # 延迟注入manager
         terminator.delay_bind(manager)
-        plaintiffTeamDelegate.delay_bind(manager)
-        defendantTeamDelegate.delay_bind(manager)
+        self.plaintiffTeamDelegate.delay_bind(manager)
+        self.defendantTeamDelegate.delay_bind(manager)
     
         # 检索相似案例
         try:
@@ -388,7 +408,7 @@ class CourtAgents:
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
     inputDir = 'dataset/ours/testDataWithEviden.json'
-    out_dir = "ljp_output/10.9"
+    out_dir = "ljp_output/10.16"
     checkpoint_file = os.path.join(out_dir, "checkpoint.json")
 
     try:
