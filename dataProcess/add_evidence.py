@@ -12,64 +12,63 @@ def extract_case_info(case_text: str) -> dict:
     """
 
     prompt = f"""
-      你是一名法律助理，你的任务是从给定的案件描述中，拆分出【案件描述】和【证据库】。
+        你是一名法律助理，你的任务是从给定的案件描述中，拆分出【案件描述】和【证据库】。
 
-      ⚖️ 输出要求：
-      1. 【案件描述】（case_description）：
-        - 内容必须完全基于输入文本，只能删除涉及证据的部分，不得添加或捏造任何新信息。
-        - 删除证据后可能导致语句不连贯，你需要对剩余内容进行适度调整，使其成为一段连贯、自然的文本。
-        - 不需要结构化，直接输出为一段文字即可。
+        ⚖️ 输出要求：
+        1. 【案件描述】（case_description）：
+            - 内容必须完全基于输入文本，只能删除涉及证据的部分，不得添加或捏造任何新信息。
+            - 删除证据后可能导致语句不连贯，你需要对剩余内容进行适度调整，使其成为一段连贯、自然的文本。
+            - 不需要结构化，直接输出为一段文字即可。
 
-      2. 【证据库】（evidence pool）：
-        - 将原告可能会提交的证据整理到 `plaintiff_evidence` 列表。
-        - 将被告可能会提交的证据整理到 `defendant_evidence` 列表。
-        - 证据条目必须严格来自输入文本，不得虚构、不得推断。
+        2. 【证据库】（evidence pool）：
+            - 将原告可能会提交的证据整理到 `plaintiff_evidence` 列表。
+            - 将被告可能会提交的证据整理到 `defendant_evidence` 列表。
+            - 证据条目必须严格来自输入文本，不得虚构、不得推断。
 
-      ⚠️ 注意事项：
-      - 所有信息必须来源于输入文本，不能捏造或添加新信息。
-      - 输出的数据中所有信息的总和应该与输入文本一致，不得减去输入文本中的任何信息。
-      - 输出请用 JSON 格式，结构如下：
+        ⚠️ 注意事项：
+        - 所有信息必须来源于输入文本，不能捏造或添加新信息。
+        - 输出的数据中所有信息的总和应该与输入文本一致，不得减去输入文本中的任何信息。
+        - 输出请用 JSON 格式，结构如下：
 
-      {{
-        "case_description": "...",
-        "plaintiff_evidence": [
-          "..."
-        ],
-        "defendant_evidence": [
-          "..."
-        ]
-      }}
+        {{
+            "case_description": "...",
+            "plaintiff_evidence": [
+            "..."
+            ],
+            "defendant_evidence": [
+            "..."
+            ]
+        }}
 
-      📄 输入文本：
-      {case_text}
-    """
-
+        📄 输入文本：
+        {case_text}
+        """
     payload = {
-    "model": "deepseek-ai/DeepSeek-V3",
-    "messages": [
-        {
-            "role": "user",
-            "content": prompt
-        }
-    ],
-    "stop": ["null"],
-    "temperature": 0.7,
-    "top_p": 0.7,
-    "top_k": 50,
-    "frequency_penalty": 0.5,
-    "n": 1,
-    "response_format": {"type": "text"},
-    "tools": [
-        {
-            "type": "function",
-            "function": {
-                "description": "<string>",
-                "name": "<string>",
-                "parameters": {},
-                "strict": False
+        "model": "deepseek-ai/DeepSeek-V3",
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
             }
-        }
-    ]
+        ],
+        "stop": ["null"],
+        "temperature": 0.7,
+        "top_p": 0.7,
+        "top_k": 50,
+        "frequency_penalty": 0.5,
+        "n": 1,
+        "response_format": {"type": "text"},
+        "tools": [
+            {
+                "type": "function",
+                "function": {
+                    "description": "<string>",
+                    "name": "<string>",
+                    "parameters": {},
+                    "strict": False
+                }
+            }
+        ]
     }
 
     headers = {
