@@ -3,14 +3,21 @@ import json
 import os
 import re
 
-def save_checkpoint(checkpoint_file, results, case_cnt, sum_p, sum_r, sum_f1,sum_retrieval_overlap, completed_indices,skipped_cases):
+def save_checkpoint(checkpoint_file, results, case_cnt,sum_art_p, sum_art_r, sum_art_f1,sum_type_p, sum_type_r, sum_type_f1,sum_retrieval_overlap, completed_indices,skipped_cases):
     """保存断点信息"""
     checkpoint_data = {
         "results": results,
         "case_cnt": case_cnt,
-        "sum_p": sum_p,
-        "sum_r": sum_r,
-        "sum_f1": sum_f1,
+        "law_articles":{
+            "sum_p": sum_art_p,
+            "sum_r": sum_art_r,
+            "sum_f1": sum_art_f1,
+        },
+        "crime_type":{
+            "sum_p": sum_type_p,
+            "sum_r": sum_type_r,
+            "sum_f1": sum_type_f1,
+        },
         'sum_retrieval_overlap':sum_retrieval_overlap,
         "completed_indices": completed_indices,
         "skipped_cases": skipped_cases,

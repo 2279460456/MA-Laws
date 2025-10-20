@@ -7,19 +7,26 @@ def extract_law_articles_from_text(text: str):
         match = re.search(r"\{[\s\S]*?\}", text)
         if not match:
             return []
+        ans = {}
         data = json.loads(match.group(0))
         arts = data.get("Law Articles", [])
+        pre_fine = data.get("Fine",[])
+        pre_sentence =  data.get("Sentence",[])
+        pre_crimetype = data.get("Crime Type",[])
+
         # 归一化为整数列表
-        normalized = []
+        pre_articles = []
         for a in arts:
             try:
-                normalized.append(int(a))
+                pre_articles.append(int(a))
             except Exception:
                 # 尝试从字符串中提取数字
                 m = re.search(r"\d+", str(a))
                 if m:
-                    normalized.append(int(m.group(0)))
-        return normalized
+                    pre_articles.append(int(m.group(0)))
+        ans['pre_articles'] = pre_articles
+        ans['pre_crimetype'] = pre_crimetype
+        return ans
     except Exception:
         return []
 
@@ -32,7 +39,7 @@ def extract_law_articles_from_messages(messages):
             arts = extract_law_articles_from_text(content)
             if arts:
                 return arts
-    return []
+    return {}
 
 def compute_prf1(pred_list, true_list):
     pred_set = set(pred_list)

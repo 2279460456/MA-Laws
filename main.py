@@ -11,6 +11,7 @@ import re
 OUT_ROUNDS = 10  #必须为偶数
 In_ROUNDS = 4
 config_list = config_list_from_json(env_or_file="configs/config_list.json")
+
 MODEL_CONFIG = {
     "config_list": config_list,
     "cache_seed": None,
@@ -20,7 +21,7 @@ MODEL_CONFIG = {
 
 # 该类负责判断外部群聊何时结束
 class CourtTerminator:
-    def __init__(self, defendantTeamDelegate, plaintiffTeamDelegate, PresidingJudge, plaintiff_evidence, defendant_evidence):
+    def __init__(self, defendantTeamDelegate, plaintiffTeamDelegate, PresidingJudge, plaintiff_evidence=[], defendant_evidence=[]):
         self.defendantTeamDelegate = defendantTeamDelegate
         self.plaintiffTeamDelegate = plaintiffTeamDelegate
         self.PresidingJudge = PresidingJudge
@@ -36,28 +37,31 @@ class CourtTerminator:
 
     def __call__(self, msg):
         name = msg.get("name")
-        if name == "PlaintiffTeamDelegate":
-            self.plaintiff_spoken = True
-        if name == "DefendantTeamDelegate":
-            self.defendant_spoken = True
-        # 当原告已发言 且 还没补充证据 → 插入补充环节
-        if self.plaintiff_spoken and not self.plaintiff_supplement_done and self.plaintiff_evidence:
-            self.plaintiff_supplement_done = True
-            print("🔎 进入证据补充环节：允许原告补充一次证据")
-            # 后续对request_reply设置为True或False进行效果测试
-            self.plaintiffTeamDelegate.send(
-                message=f'原告补充证据集和：{self.plaintiff_evidence}', recipient=self.manager, request_reply=True)
-            return False  # 不结束
-        # 当被告已发言 且 还没补充证据 → 插入补充环节
-        if self.defendant_spoken and not self.defendant_supplement_done and self.defendant_evidence:
-            self.defendant_supplement_done = True
-            print("🔎 进入证据补充环节：允许被告补充一次证据")
-            # 后续对request_reply设置为True或False进行效果测试
-            self.defendantTeamDelegate.send(
-                message=f'被告补充证据集和：{self.defendant_evidence}', recipient=self.manager, request_reply=True)
-            return False  # 不结束
+        print('此处判断该函数是否执行')
+        # if name == "PlaintiffTeamDelegate":
+        #     self.plaintiff_spoken = True
+        # if name == "DefendantTeamDelegate":
+        #     self.defendant_spoken = True
+        # # 当原告已发言 且 还没补充证据 → 插入补充环节
+        # if self.plaintiff_spoken and not self.plaintiff_supplement_done and self.plaintiff_evidence:
+        #     self.plaintiff_supplement_done = True
+        #     print("🔎 进入证据补充环节：允许原告补充一次证据")
+        #     # 后续对request_reply设置为True或False进行效果测试
+        #     self.plaintiffTeamDelegate.send(
+        #         message=f'原告补充证据集和：{self.plaintiff_evidence}', recipient=self.manager, request_reply=True)
+        #     return False  # 不结束
+        # # 当被告已发言 且 还没补充证据 → 插入补充环节
+        # if self.defendant_spoken and not self.defendant_supplement_done and self.defendant_evidence:
+        #     self.defendant_supplement_done = True
+        #     print("🔎 进入证据补充环节：允许被告补充一次证据")
+        #     # 后续对request_reply设置为True或False进行效果测试
+        #     self.defendantTeamDelegate.send(
+        #         message=f'被告补充证据集和：{self.defendant_evidence}', recipient=self.manager, request_reply=True)
+        #     return False  # 不结束
+        
         # 只允许 PresidingJudge 说“庭审结束”时中断
-        if msg.get("name") == "PresidingJudge" and any(kw in msg.get("content", "") for kw in ["庭审结束", "本次审理到此结束", "宣判完毕"]):
+        if name == "PresidingJudge" and any(kw in msg.get("content", "") for kw in ["庭审结束", "本次审理到此结束", "宣判完毕"]):
+            print('限定测试文字')
             return True
         return False
 
@@ -77,17 +81,18 @@ class PlaintiffTeamDelegate(AssistantAgent):
     def generate_reply(self, messages=None, sender=None, exclude=None, **kwargs):
         if not messages:
             messages = self.manager.groupchat.messages
-            print(3333333, messages)
 
-        last_message_from_court = messages[-1]["content"] if messages else ""
+        last_defand_msg = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "PlaintiffTeamDelegate":
+                last_defand_msg = msg.get("content", "")
+                break
 
         print(f"\n--- PlaintiffTeamDelegate 收到法庭消息，转发给内部团队讨论 ---")
         internal_message = (
-            f"案件描述: {self.case_description}\n\n"
-            f"法庭传来消息：{last_message_from_court}\n\n"
-            "请团队成员（首席律师、证据专家、法律研究员）仔细分析法庭消息。"
-            "围绕案件描述和法庭消息进行充分讨论，并生成一个针对法庭消息的统一、清晰、有力的回复。"
-            "首席律师需要在讨论结束后，对团队讨论的结果进行总结，并确保最终的回复是原创的，并且内容与法庭消息或案件描述有显著区别。"
+            f"案件描述: {self.case_description}\n"
+            f"被告方的最近一次发言内容：{last_defand_msg}\n"
+            "请团队成员仔细分析法庭消息。"
         )
 
         plaintiff_internal_chat_result = self.initiate_chat(
@@ -133,17 +138,18 @@ class DefendantTeamDelegate(AssistantAgent):
     def generate_reply(self, messages=None, sender=None, exclude=None, **kwargs):
         if not messages:
             messages = self.manager.groupchat.messages
-            print(55555555, messages)
 
-        last_message_from_court = messages[-1]["content"] if messages else ""
+        last_plaintiff_msg = ""
+        for msg in reversed(messages):
+            if msg.get("role") == "PlaintiffTeamDelegate":
+                last_plaintiff_msg = msg.get("content", "")
+                break
 
         print(f"\n--- DefendantTeamDelegate 收到法庭消息，转发给内部团队讨论 ---")
         internal_message = (
-            f"案件描述: {self.case_description}\n\n"
-            f"法庭传来消息：{last_message_from_court}\n\n"
-            "请团队成员（首席律师、证据专家、法律研究员、客户联络人）仔细分析法庭消息。"
-            "围绕案件描述和法庭消息进行充分讨论，并生成一个针对法庭消息的统一、清晰、有力的回复。"
-            "首席律师需要在讨论结束后，对团队讨论的结果进行总结，并确保最终的回复是原创的，并且内容与法庭消息或案件描述有显著区别。"
+            f"案件描述: {self.case_description}\n"
+            f"原告方的最近一次发言内容：{last_plaintiff_msg}\n"
+            "请团队成员仔细分析法庭消息。"
         )
 
         # Initiate an internal chat with the defendant team
@@ -223,24 +229,21 @@ class CourtAgents:
     def custom_speaker_selector(self,last_speaker, groupchat):
 
         round_idx = len(groupchat.messages)  # 当前发言计数（每条消息算一次发言）
-        print(9999999999,last_speaker.name)
+
         # 还没到最后一轮：原告与被告轮流发言
         if round_idx < OUT_ROUNDS - 1:
-            if last_speaker is 'PresidingJudge':
-                # 第一次发言 -> 原告先说
+            if last_speaker.name == 'PresidingJudge':
                 return self.plaintiffTeamDelegate
             elif last_speaker.name == "PlaintiffTeamDelegate":
-                return self.DefendantTeamDelegate
+                return self.defendantTeamDelegate
             else:
                 return self.plaintiffTeamDelegate
 
-        # ✅ 最后一轮让法官发言
+        # 最后一轮让法官发言
         else:
             return self.PresidingJudge
 
-
-
-    def run_simulation(self, case_data: dict, truth_map: dict, out_dir: str):
+    def run_simulation(self, case_data: dict,  out_dir: str):
         """
         运行一个完整的法庭模拟案例。
         param case_data: 包含案件所有信息的字典，应包含 'index', 'CaseId', 'case_description, "defendant_evidence","plaintiff_evidence"'
@@ -249,8 +252,12 @@ class CourtAgents:
         case_index = case_data['index']
         CaseId = case_data['CaseId']
         case_description = case_data['case_description']
-        plaintiff_evidence = case_data['plaintiff_evidence']
-        defendant_evidence = case_data['defendant_evidence']
+        # plaintiff_evidence = case_data['plaintiff_evidence']
+        # defendant_evidence = case_data['defendant_evidence']
+        case_true_articles = case['Law Articles']
+        case_true_type = case['Crime Type']
+        case_true_sentence = case['Sentence']
+        case_true_fine = case['Fine']
 
         print(f"\n===== 正在运行模拟案例 {case_index}: {CaseId} =====\n")
 
@@ -310,7 +317,7 @@ class CourtAgents:
         
         # 实例化判断外部对话何时终止的类
         terminator = CourtTerminator(defendantTeamDelegate=self.defendantTeamDelegate, plaintiffTeamDelegate=self.plaintiffTeamDelegate,
-                                     PresidingJudge=self.PresidingJudge, plaintiff_evidence=plaintiff_evidence, defendant_evidence=defendant_evidence)
+                                     PresidingJudge=self.PresidingJudge)
 
         # 构建外部对话群聊
         debate_agents = [self.PresidingJudge,
@@ -386,29 +393,40 @@ class CourtAgents:
         print(f"\n对话记录已保存到：{conversation_path}")
 
         # === 阶段三：计算本案例Law Articles指标 ===
-        pred_articles = extract_law_articles_from_messages(manager.groupchat.messages)
-        true_articles = truth_map.get(CaseId, [])
-        p, r, f1 = compute_prf1(pred_articles, true_articles)
-        retrieval_overlap = len(set(retrieved_laws) & set(true_articles)) / len(true_articles) if true_articles else 0
+        pred_data = extract_law_articles_from_messages(manager.groupchat.messages)
+        art_p, art_r, art_f1 = compute_prf1(pred_data['pre_articles'], case_true_articles)
+        type_p,type_r,type_f1 = compute_prf1(pred_data['pre_crimetype'], case_true_type)
+
+        print(f'预测罪名的P,R,F1：\n{type_p,type_r,type_f1}')
+        retrieval_overlap = len(set(retrieved_laws) & set(case_true_articles)) / len(case_true_articles) if case_true_articles else 0
 
         print(f"\n===== 案例 {case_index}: {CaseId} 模拟结束 =====\n")
 
         return {
             "index": case_index,
             "CaseId": CaseId,
-            "pred_law_articles": sorted(list(set(pred_articles))),
-            "true_law_articles": sorted(list(set(true_articles))),
-            "precision": p,
-            "recall": r,
-            "f1": f1,
+            "Law_articles":{
+                "pred_law_articles": sorted(list(set(pred_data['pre_articles']))),
+                "true_law_articles": sorted(list(set(case_true_articles))),
+                "precision": art_p,
+                "recall": art_r,
+                "f1": art_f1,
+            },
+            "crime_types":{
+                "pred_crime_types": list(set(pred_data['pre_crimetype'])),
+                "true_crime_types": list(set(case_true_type)),
+                "precision": type_p,
+                "recall": type_r,
+                "f1": type_f1,
+            },
             "retrieval_overlap": retrieval_overlap,
             "conversation_path": conversation_path,
         }
 
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
-    inputDir = 'dataset/ours/testDataWithEviden.json'
-    out_dir = "ljp_output/10.16"
+    inputDir = 'dataset/ours/judgeCases.json'
+    out_dir = "ljp_output/10.20"
     checkpoint_file = os.path.join(out_dir, "checkpoint.json")
 
     try:
@@ -419,31 +437,7 @@ if __name__ == "__main__":
         exit()
     except json.JSONDecodeError:
         print("错误：'cases.json' 文件格式不正确，无法解析。")
-        exit()
-
-    # 加载真值Law Articles
-    truth_file = 'dataset/Judge/all.json'
-    try:
-        with open(truth_file, 'r', encoding='utf-8') as f:
-            judge_items = json.load(f)
-    except Exception as e:
-        print(f"错误：无法加载真值文件 {truth_file} ：{e}")
-        exit()
-
-    truth_map = {}
-    for item in judge_items:
-        cid = item.get('CaseId')
-        arts = item.get('Law Articles', [])
-        normalized = []
-        for a in arts:
-            try:
-                normalized.append(int(a))
-            except Exception:
-                m = re.search(r"\d+", str(a))
-                if m:
-                    normalized.append(int(m.group(0)))
-        if cid:
-            truth_map[cid] = normalized
+        exit() 
 
     # 创建输出目录
     if not os.path.exists(out_dir):
@@ -455,9 +449,12 @@ if __name__ == "__main__":
     if checkpoint_data:
         # 从断点恢复
         results = checkpoint_data["results"]
-        sum_p = checkpoint_data["sum_p"]
-        sum_r = checkpoint_data["sum_r"]
-        sum_f1 = checkpoint_data["sum_f1"]
+        sum_art_p = checkpoint_data["law_articles"]["sum_art_p"]
+        sum_art_r = checkpoint_data["law_articles"]["sum_art_r"]
+        sum_art_f1 = checkpoint_data["law_articles"]["sum_art_f1"]
+        sum_type_p = checkpoint_data["crime_type"]["sum_type_p"]
+        sum_type_r = checkpoint_data["crime_type"]["sum_type_r"]
+        sum_type_f1 = checkpoint_data["crime_type"]["sum_type_f1"]
         sum_retrieval_overlap = checkpoint_data["sum_retrieval_overlap"]
         case_cnt = checkpoint_data["case_cnt"]
         completed_indices = set(checkpoint_data["completed_indices"])
@@ -466,9 +463,12 @@ if __name__ == "__main__":
     else:
         # 初始化新运行
         results = []
-        sum_p = 0.0
-        sum_r = 0.0
-        sum_f1 = 0.0
+        sum_art_p = 0.0
+        sum_art_r = 0.0
+        sum_art_f1 = 0.0
+        sum_type_p = 0.0
+        sum_type_r = 0.0
+        sum_type_f1 = 0.0
         sum_retrieval_overlap = 0
         case_cnt = 0
         completed_indices = set()
@@ -480,6 +480,7 @@ if __name__ == "__main__":
     for case in simulation_cases:
         case_index = case["index"]
         case_id = case["CaseId"]
+
         if "index" not in case or 'case_description' not in case:
             print(f"警告：案件 '{case.get('CaseId', '未命名')}' 缺少'index'或'case_description'字段，将跳过此案件。")
             skipped_cases.append({
@@ -487,7 +488,7 @@ if __name__ == "__main__":
             "index": case_index,
             "reason": "missing index or case_description"
             })
-            save_checkpoint(checkpoint_file,results,case_cnt,sum_p,sum_r,sum_f1,sum_retrieval_overlap,list(completed_indices),skipped_cases)
+            save_checkpoint(checkpoint_file,results,case_cnt,sum_art_p,sum_art_r,sum_art_f1,sum_type_p, sum_type_r, sum_type_f1,sum_retrieval_overlap,list(completed_indices),skipped_cases)
             continue
 
         # 检查是否已完成
@@ -497,47 +498,53 @@ if __name__ == "__main__":
 
         try:
             print(f"\n开始处理案例 {case_index}...")
-            res = court.run_simulation(case, truth_map, out_dir)
+            res = court.run_simulation(case, out_dir)
             results.append(res)
-            sum_p += res["precision"]
-            sum_r += res["recall"]
-            sum_f1 += res["f1"]
+            sum_art_p += res["Law_articles"]["precision"]
+            sum_art_r += res["Law_articles"]["recall"]
+            sum_art_f1 += res["Law_articles"]["f1"]
+            sum_type_p += res["crime_types"]["precision"]
+            sum_type_r += res["crime_types"]["recall"]
+            sum_type_f1 += res["crime_types"]["f1"]
             sum_retrieval_overlap += res['retrieval_overlap']
             case_cnt += 1
             completed_indices.add(case_index)
 
             # 每完成一个案例就保存断点
-            save_checkpoint(checkpoint_file, results, case_cnt,sum_p, sum_r, sum_f1,sum_retrieval_overlap, list(completed_indices),skipped_cases)
+            save_checkpoint(checkpoint_file, results, case_cnt,sum_art_p, sum_art_r, sum_art_f1,sum_type_p, sum_type_r, sum_type_f1,sum_retrieval_overlap, list(completed_indices),skipped_cases)
             print(f"案例 {case_index} 处理完成，断点已保存")
 
         except Exception as e:
             print(f"处理案例 {case_index} 时发生错误：{e}")
             print("程序将停止，下次运行时将从断点继续...")
             # 保存当前进度
-            save_checkpoint(checkpoint_file, results, case_cnt,sum_p, sum_r, sum_f1,sum_retrieval_overlap, list(completed_indices),skipped_cases)
+            save_checkpoint(checkpoint_file, results, case_cnt,sum_art_p, sum_art_r, sum_art_f1,sum_type_p, sum_type_r, sum_type_f1,sum_retrieval_overlap, list(completed_indices),skipped_cases)
             break
 
     if case_cnt > 0:
-        avg_p = sum_p / case_cnt
-        avg_r = sum_r / case_cnt
-        avg_f1 = sum_f1 / case_cnt
+        avg_art_p = sum_art_p / case_cnt
+        avg_art_r = sum_art_r / case_cnt
+        avg_art_f1 = sum_art_f1 / case_cnt
+        avg_type_p = sum_type_p / case_cnt
+        avg_type_r = sum_type_r / case_cnt
+        avg_type_f1 = sum_type_f1 / case_cnt
         avg_retrieval_overlap = sum_retrieval_overlap/case_cnt
-        print(f"\n=== 所有案例平均指标（Law Articles） ===")
-        print(f"平均 Precision: {avg_p:.4f}")
-        print(f"平均 Recall:    {avg_r:.4f}")
-        print(f"平均 F1:        {avg_f1:.4f}")
-        print(f"平均 retrieval_overlap:        {avg_retrieval_overlap:.4f}")
 
         # 保存指标到文件
         metrics_output = {
             "per_case": results,
-            "average": {
-                "precision": avg_p,
-                "recall": avg_r,
-                "f1": avg_f1,
-                "retrieval_overlap":avg_retrieval_overlap,
-                "cases": case_cnt,
+            "law_articles_average": {
+                "precision": avg_art_p,
+                "recall": avg_art_r,
+                "f1": avg_art_f1,
             },
+            "crime_type_average":{
+                "precision": avg_type_p,
+                "recall": avg_type_r,
+                "f1": avg_type_f1,
+            },
+            "retrieval_overlap":avg_retrieval_overlap,
+            "cases": case_cnt,
         }
 
         if not os.path.exists(out_dir):
