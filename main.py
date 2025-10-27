@@ -8,7 +8,8 @@ import os
 import re
 
 # === 全局配置 ===
-OUT_ROUNDS = 10  #必须为偶数
+# OUT_ROUNDS = 10  #必须为偶数
+OUT_ROUNDS = 6  #必须为偶数
 In_ROUNDS = 4
 config_list = config_list_from_json(env_or_file="configs/config_list.json")
 
@@ -328,7 +329,7 @@ class CourtAgents:
             max_round=OUT_ROUNDS,
             speaker_selection_method=self.custom_speaker_selector,
             allow_repeat_speaker=False,
-            select_speaker_auto_verbose=False
+            select_speaker_auto_verbose=False,
         )
         manager = GroupChatManager(
             groupchat=groupchat,
@@ -426,7 +427,8 @@ class CourtAgents:
 if __name__ == "__main__":
     # 从JSON文件中加载要模拟的案例
     inputDir = 'dataset/ours/judgeCases.json'
-    out_dir = "ljp_output/10.20"
+    # out_dir = "ljp_output/10.20"
+    out_dir = "ljp_output/10.20-6轮讨论"
     checkpoint_file = os.path.join(out_dir, "checkpoint.json")
 
     try:
@@ -449,12 +451,12 @@ if __name__ == "__main__":
     if checkpoint_data:
         # 从断点恢复
         results = checkpoint_data["results"]
-        sum_art_p = checkpoint_data["law_articles"]["sum_art_p"]
-        sum_art_r = checkpoint_data["law_articles"]["sum_art_r"]
-        sum_art_f1 = checkpoint_data["law_articles"]["sum_art_f1"]
-        sum_type_p = checkpoint_data["crime_type"]["sum_type_p"]
-        sum_type_r = checkpoint_data["crime_type"]["sum_type_r"]
-        sum_type_f1 = checkpoint_data["crime_type"]["sum_type_f1"]
+        sum_art_p = checkpoint_data["law_articles"]["sum_p"]
+        sum_art_r = checkpoint_data["law_articles"]["sum_r"]
+        sum_art_f1 = checkpoint_data["law_articles"]["sum_f1"]
+        sum_type_p = checkpoint_data["crime_type"]["sum_p"]
+        sum_type_r = checkpoint_data["crime_type"]["sum_r"]
+        sum_type_f1 = checkpoint_data["crime_type"]["sum_f1"]
         sum_retrieval_overlap = checkpoint_data["sum_retrieval_overlap"]
         case_cnt = checkpoint_data["case_cnt"]
         completed_indices = set(checkpoint_data["completed_indices"])

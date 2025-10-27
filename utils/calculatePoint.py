@@ -6,7 +6,7 @@ def extract_law_articles_from_text(text: str):
         # 尝试从文本中提取第一个JSON对象
         match = re.search(r"\{[\s\S]*?\}", text)
         if not match:
-            return []
+            return {}
         ans = {}
         data = json.loads(match.group(0))
         arts = data.get("Law Articles", [])
@@ -28,13 +28,13 @@ def extract_law_articles_from_text(text: str):
         ans['pre_crimetype'] = pre_crimetype
         return ans
     except Exception:
-        return []
+        return {}
 
 
 def extract_law_articles_from_messages(messages):
     # 从审判长最新消息中解析结构化结果
     for msg in reversed(messages):
-        if msg.get("name") == "PresidingJudge":
+        if msg.get("name") == "presidingJudge_final" and  msg["content"]:
             content = msg.get("content", "")
             arts = extract_law_articles_from_text(content)
             if arts:

@@ -2,7 +2,7 @@
     {
         "model": "Qwen/Qwen3-8B",
         "base_url": "https://api.siliconflow.cn/v1",
-        "api_key": "sk-wqhhsltkxgtkutuelgtocfzarqaaectyywghxnpittjbmvfe",
+        "api_key": "sk-cufzubuzkfsjdlxoybyusguhruyodkztslshwiuijdzgupeu",
         "tags": [
             "Qwen"
         ]

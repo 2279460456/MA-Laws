@@ -3,7 +3,7 @@ import json
 import os
 import re
 
-def save_checkpoint(checkpoint_file, results, case_cnt,sum_art_p, sum_art_r, sum_art_f1,sum_type_p, sum_type_r, sum_type_f1,sum_retrieval_overlap, completed_indices,skipped_cases):
+def save_checkpoint(checkpoint_file, results, case_cnt,sum_art_p, sum_art_r, sum_art_f1,sum_type_p, sum_type_r, sum_type_f1, completed_cases,skipped_cases):
     """保存断点信息"""
     checkpoint_data = {
         "results": results,
@@ -12,14 +12,20 @@ def save_checkpoint(checkpoint_file, results, case_cnt,sum_art_p, sum_art_r, sum
             "sum_p": sum_art_p,
             "sum_r": sum_art_r,
             "sum_f1": sum_art_f1,
+            "average_p":sum_art_p/case_cnt if case_cnt>0 else 0,
+            "average_r":sum_art_r/case_cnt if case_cnt>0 else 0,
+            "average_f1":sum_art_f1/case_cnt if case_cnt>0 else 0,
         },
         "crime_type":{
             "sum_p": sum_type_p,
             "sum_r": sum_type_r,
             "sum_f1": sum_type_f1,
+            "average_p":sum_type_p/case_cnt if case_cnt>0 else 0,
+            "average_r":sum_type_r/case_cnt if case_cnt>0 else 0,
+            "average_f1":sum_type_f1/case_cnt if case_cnt>0 else 0,
         },
-        'sum_retrieval_overlap':sum_retrieval_overlap,
-        "completed_indices": completed_indices,
+        # 'sum_retrieval_overlap':sum_retrieval_overlap,
+        "completed_cases": completed_cases,
         "skipped_cases": skipped_cases,
         "timestamp": time.time()
     }
@@ -37,8 +43,6 @@ def load_checkpoint(checkpoint_file):
         with open(checkpoint_file, "r", encoding="utf-8") as f:
             checkpoint_data = json.load(f)
         print(f"找到断点文件，将从中断处继续执行...")
-        print(f"已完成案例数：{checkpoint_data['case_cnt']}")
-        print(f"已完成的案例索引： {checkpoint_data['completed_indices']}")
         return checkpoint_data
     except Exception as e:
         print(f"加载断点文件失败：{e}")

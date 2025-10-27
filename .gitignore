@@ -3,6 +3,7 @@ dataset
 
 #输出文件
 ljp_output
+ag4_output
 
 #向量数据库
 chroma
