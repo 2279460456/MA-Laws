@@ -8,6 +8,7 @@ from autogen_agentchat.conditions import MaxMessageTermination,FunctionalTermina
 from autogen_agentchat.teams import SelectorGroupChat,RoundRobinGroupChat
 from autogen_agentchat.messages import (BaseChatMessage, BaseAgentEvent, TextMessage)
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
+from autogen_ext.models.ollama import OllamaChatCompletionClient
 
 import asyncio
 import json
@@ -17,21 +18,22 @@ import time
 
 from utils import (getPrompt,load_checkpoint,is_case_completed,save_checkpoint,extract_law_articles_from_messages,compute_prf1)
 
+# custom_model_client = OpenAIChatCompletionClient(
+#     model="Qwen/Qwen3-8B",
+#     base_url="https://api.siliconflow.cn/v1/",
+#     api_key="sk-jgbqaolqjggmgndtdzhweqxsdoqfpdcmpowulgjtpadyzgtb",
+#     timeout=120,
+#     model_info={
+#         "vision": True,
+#         "function_calling": False,
+#         "json_output": True,
+#         "family": "unknown",
+#         "structured_output": True,
+#         "multiple_system_messages": True
+#     },
+# )
 
-custom_model_client = OpenAIChatCompletionClient(
-    model="Qwen/Qwen3-8B",
-    base_url="https://api.siliconflow.cn/v1/",
-    api_key="sk-jgbqaolqjggmgndtdzhweqxsdoqfpdcmpowulgjtpadyzgtb",
-    timeout=120,
-    model_info={
-        "vision": True,
-        "function_calling": False,
-        "json_output": True,
-        "family": "unknown",
-        "structured_output": True,
-        "multiple_system_messages": True
-    },
-)
+custom_model_client = OllamaChatCompletionClient(model="qwen3:8b")
 
 # Qwen/Qwen3-8B
 # THUDM/GLM-4-9B-0414
@@ -344,6 +346,8 @@ async def main():
         save_checkpoint(checkpoint_file, results, case_cnt,sum_art_p, sum_art_r, sum_art_f1,sum_type_p, sum_type_r, sum_type_f1, list(completed_cases),list(skipped_cases))
     finally:
         #无论正常或异常，都需要做的操作
+        print("清理缓存，关闭模型客户端连接等操作")
+        await custom_model_client.close()
         await court.law_cases_memory.close()
         await court.law_articles_memory.close()
 

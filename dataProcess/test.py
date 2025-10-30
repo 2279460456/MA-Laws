@@ -2,6 +2,9 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from autogen_ext.memory.chromadb import ChromaDBVectorMemory, PersistentChromaDBVectorMemoryConfig
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.ui import Console
+import asyncio
+from autogen_core.models import UserMessage
+from autogen_ext.models.ollama import OllamaChatCompletionClient
 
 import os
 import asyncio
@@ -40,10 +43,12 @@ async def main():
     },
   )
 
+  ollama_model_client = OllamaChatCompletionClient(model="qwen3:8b")
+
   # 创建 RAG 助手
   rag_assistant = AssistantAgent(
       name="law_rag_assistant",
-      model_client=custom_model_client,
+      model_client=ollama_model_client,
       memory=[law_cases_memory],
   )
 
