@@ -184,28 +184,79 @@ Prompts={
     ),
     'selector_prompt':(
         """
-        你是多阶段法庭讨论的流程控制者。你的任务是根据当前对话的阶段和内容，决定下一个应该发言的角色或团队。
-        【法庭讨论分为三个阶段】
-        1. **聚焦阶段（Focus Stage）**
-            - 参与者：仅 presidingJudge_focus
-            - 任务：聚焦案件争议焦点、明确审理范围
-            - 发言顺序：仅 presidingJudge_focus 一人连续发言，直到聚焦完成
+        你是法庭讨论的流程控制者（Selector）。你的任务是根据当前对话内容，
+        决定下一个应该发言的角色或团队。
 
-        2. **辩论阶段（Debate Stage）**
-            - 参与者：presidingJudge_debate、plaintiffTeam、defendantTeam
-            - 任务：围绕案件事实、证据、法律适用进行辩论
-            - 发言顺序建议：
-                presidingJudge_debate → plaintiffTeam → defendantTeam → presidingJudge_debate（视情况再次引导）
-            - 若某一方团队内部讨论未完成，应优先让该团队继续发言，直到达成共识
+        【当前参与者结构】
+        1. presidingJudge_focus（审判长·焦点阶段，负责聚焦案件核心问题）
+        2. presidingJudge_debate（审判长·辩论阶段，负责在辩论中维持秩序与引导讨论）
+        3. presidingJudge_final（审判长·总结阶段，负责做出审判总结与裁决）
+        4. plaintiffTeam（原告团队，由 plaintiffLeadCounsel、plaintiffEvidenceSpecialist、plaintiffLegalResearcher 组成）
+        5. defendantTeam（被告团队，由 defendantLeadCounsel、defendantEvidenceSpecialist、defendantLegalResearcher 组成）
 
-        3. **裁决阶段（Final Stage）**
-            - 参与者：仅 presidingJudge_final
-            - 任务：总结案件辩论结果并作出最终裁决
-            - 发言顺序：仅 presidingJudge_final 发言
+        【流程规则】
+        - 庭审开始时：由 presidingJudge_focus 发言，宣布庭审开始并明确案件焦点。
+        - 聚焦阶段结束后：进入辩论阶段，由 presidingJudge_debate 主持讨论。
+        - 在辩论阶段：
+            - 法官可邀请 plaintiffTeam（原告方）先行陈述案情；
+            - 之后由 defendantTeam（被告方）进行答辩；
+            - 若法官认为需要补充举证，可再次邀请任一团队发言；
+            - 法官可在必要时介入提问、澄清或引导讨论。
+        - 当辩论充分后，进入总结阶段，由 presidingJudge_final 发言，总结案件事实、评估辩论内容并宣读判决。
+        - 若任何团队内部讨论尚未结束（仍有推理或举证过程），应优先让该团队继续发言，直到达成结论。
+
+        【发言顺序建议】
+        presidingJudge_focus → plaintiffTeam → defendantTeam → presidingJudge_debate（引导讨论） 
+        → plaintiffTeam / defendantTeam（补充辩论） → presidingJudge_final（总结并判决）
 
         【输出要求】
-        - 只输出一个应当发言的参与者名称：{participants} 
+        - 只需输出下一个发言者的名称：
+        presidingJudge_focus、presidingJudge_debate、presidingJudge_final、
+        plaintiffTeam 或 defendantTeam。
         - 不要输出任何解释、理由或额外文字。
+        """
+    ),
+    'selector_prompt1':(
+        """
+        你是法庭讨论的流程控制者（Selector），你的任务是根据当前对话内容，
+        决定下一个应该发言的智能体（角色或团队）。
+
+        {roles}
+
+        【当前对话上下文】
+        {history}
+
+        【流程阶段说明】
+        整个法庭讨论分为三个阶段：
+
+        1. **聚焦阶段（Focus Stage）**  
+        - 仅由 `presidingJudge_focus` 发言。  
+        - 他负责宣布庭审开始、明确案件焦点与讨论议题。  
+
+        2. **辩论阶段（Debate Stage）**  
+        - 由 `presidingJudge_debate` 主持，允许以下三方发言：  
+            - `presidingJudge_debate`（审判长·辩论阶段，负责维持秩序与引导讨论）  
+            - `plaintiffTeam`（原告团队，先陈述案情与举证）  
+            - `defendantTeam`（被告团队，负责答辩与反驳）  
+        - 法官可在该阶段多次邀请任一方继续发言或补充举证。  
+
+        3. **总结阶段（Final Stage）**  
+        - 仅由 `presidingJudge_final` 发言。  
+        - 他负责总结辩论内容、评估事实并宣读判决结果。  
+
+        【阶段切换规则】
+        - 如果当前对话刚开始（历史消息少于 2 条），则进入 **聚焦阶段**。  
+        - 若对话消息在 2 到 20 条之间，则进入 **辩论阶段**。  
+        - 若消息超过 20 条，则进入 **总结阶段**。  
+        - 不允许在非对应阶段选择无关的角色（例如在辩论阶段让 `presidingJudge_focus` 发言）。  
+
+        【发言顺序建议】
+        presidingJudge_focus → plaintiffTeam → defendantTeam → presidingJudge_debate（主持与引导） → plaintiffTeam / defendantTeam（补充） → presidingJudge_final（总结与判决）
+
+        【输出要求】
+        - 仅从以下候选中选择一位发言者：{participants}  
+        - 只输出**一个名称**，必须与候选名称完全一致。  
+        - 不得输出任何解释、理由或额外文字。
         """
     ),
 }

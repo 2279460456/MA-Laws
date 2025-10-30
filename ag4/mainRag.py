@@ -148,10 +148,10 @@ class CourtAgents:
             model_client=custom_model_client,
             termination_condition=self.team_termination,
             model_context=self.model_context,
-            selector_prompt=getPrompt('selector_prompt'),
+            selector_prompt=getPrompt('selector_prompt1'),
             allow_repeated_speaker=False,
             candidate_func=self.candidate_func,
-            max_selector_attempts=3,
+            max_selector_attempts=10,
         )
 
     def candidate_func(self, history):
